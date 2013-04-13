@@ -263,26 +263,6 @@ u_base_type mul_pow2(fixed_point *z, base_type w){
     }
 }
 
-// z := v * w
-void mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
-    zero_clear(z->data);
-    if(v->sign == 0 || w->sign == 0){
-        z->sign = 0;
-        return;
-    }
-    u_base2_type carry2 = 0;
-    z->sign = v->sign * w->sign;
-    for(base_type i = 0; i < PREC; ++i){
-        for(base_type j = 0; j < PREC; ++j){
-            base_type k = i + j;
-            if(k >= PREC){ continue; }
-            u_base2_type n = (u_base2_type)(v->data[i]) * (u_base2_type)(w->data[j]) + carry2;
-            z->data[k] += (u_base_type)(n & BASE2_TYPE_MASK);
-            carry2 = (u_base_type)(n >> (BASE2_TYPE_SIZE / 2));
-        }
-    }
-}
-
 // z. := v. * w.
 void fp_mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
     if(v->sign == 0 || w->sign == 0){

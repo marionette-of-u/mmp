@@ -50,23 +50,47 @@ struct fixed_point{
         data[fraction_part] = static_cast<uint32_t>(n < 0 ? -n : n);
     }
 
-    fixed_point(std::size_t integral_part_, std::size_t fraction_part_, const std::string &str) :
+    fixed_point(
+        std::size_t integral_part_,
+        std::size_t fraction_part_,
+        const std::string &str_i,
+        const std::string &str_f
+    ) :
         integral_part(integral_part_),
         fraction_part(fraction_part_),
         precision(integral_part_ + fraction_part_),
         sign(1),
         data(new uint32_t[precision])
     {
-        std::size_t n = static_cast<std::size_t>(std::ceil(LOG_2_10 * str.size() / (BASE2_TYPE_SIZE / 2)));
-        if(n > precision){ throw(fixed_point_exception("input value is too large.")); }
-        for(size_t i = 0; i < precision; ++i){ data[i] = 0; }
-        fixed_point digit(integral_part, fraction_part, 1);
-        char temp[] = { 0, '\0' };
-        for(std::size_t i = 0; i < str.size(); ++i){
-            primitive_mul_by_single(10);
-            temp[0] = str[i];
-            digit.data[0] = std::strtol(temp, nullptr, 10);
-            primitive_add_n(digit);
+        for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
+        {
+            // interpret integral part.
+            std::size_t n = static_cast<std::size_t>(std::ceil(LOG_2_10 * str_i.size() / (BASE2_TYPE_SIZE / 2)));
+            if(n > integral_part){ throw(fixed_point_exception("input value is too large.")); }
+            fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
+            for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
+            char temp[] = { 0, '\0' };
+            for(std::size_t i = 0; i < str_i.size(); ++i){
+                z.primitive_mul_by_single(10);
+                temp[0] = str_i[i];
+                digit.data[fraction_part] = std::strtol(temp, nullptr, 10);
+                z.primitive_add_n(digit);
+            }
+            primitive_add_n(z);
+        }
+        {
+            // interpret fraction part.
+            fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
+            for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
+            digit.data[fraction_part] = 0;
+            char temp[] = { 0, '\0' };
+            for(int i = static_cast<int>(str_f.size() - 1); i >= 0; --i){
+                temp[0] = str_f[i];
+                digit.data[fraction_part] = std::strtol(temp, nullptr, 10);
+                z.primitive_add_n(digit);
+                z.primitive_div_by_single(10);
+            }
+            primitive_add_n(z);
         }
     }
 
@@ -237,39 +261,42 @@ int main(){
         cl::Program program(context, sources);
         program.build(devices);
 
-        fixed_point
-            f(g_integral_part, g_fraction_part, 1),
-            g(g_integral_part, g_fraction_part, 5),
-            h(g_integral_part, g_fraction_part, 1);
-        f.data[4] = 0;
-        f.data[3] = 0x80000000;
-        f.data[0] = f.data[1] = f.data[2] = 0;
+        fixed_point f(g_integral_part, g_fraction_part, "1024201", "9876543210123456789");
         std::cout << f.to_fp_string() << std::endl;
-        std::cout << g.to_fp_string() << std::endl;
 
-        cl::Buffer
-            f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
-            f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
-            g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
-            g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
-        queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
-        queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
-        queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
-        queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
+        //fixed_point
+        //    f(g_integral_part, g_fraction_part, 1),
+        //    g(g_integral_part, g_fraction_part, 2),
+        //    h(g_integral_part, g_fraction_part, 1);
+        //f.data[4] = 1;
+        //f.data[3] = 0x80000000;
+        //f.data[0] = f.data[1] = f.data[2] = 0;
+        //std::cout << f.to_fp_string() << std::endl;
+        //std::cout << g.to_fp_string() << std::endl;
 
-        cl::Kernel kernel(program, "cl_main");
-        kernel.setArg(0, f_sign_buffer);
-        kernel.setArg(1, f_buffer);
-        kernel.setArg(2, g_sign_buffer);
-        kernel.setArg(3, g_buffer);
+        //cl::Buffer
+        //    f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
+        //    f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
+        //    g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
+        //    g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
+        //queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
+        //queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
+        //queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
+        //queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
 
-        cl::Event event;
-        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
-        event.wait();
-        queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
-        queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+        //cl::Kernel kernel(program, "cl_main");
+        //kernel.setArg(0, f_sign_buffer);
+        //kernel.setArg(1, f_buffer);
+        //kernel.setArg(2, g_sign_buffer);
+        //kernel.setArg(3, g_buffer);
 
-        std::cout << f.to_fp_string() << std::endl;
+        //cl::Event event;
+        //queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
+        //event.wait();
+        //queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
+        //queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+
+        //std::cout << f.to_fp_string() << std::endl;
     }catch(cl::Error err){
         std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
     }catch(std::exception err){
