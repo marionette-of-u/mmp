@@ -1,5 +1,8 @@
 // PREC = 1[integral part] + n[fraction part]
-#define PREC 5
+#define INTEGER_PART 1
+#define FRACTION_PART 4
+
+#define PREC (INTEGER_PART + FRACTION_PART)
 
 typedef uint u_base_type;
 typedef int base_type;
@@ -9,25 +12,6 @@ typedef long base2_type;
 #define BASE2_TYPE_MASK 0x00000000FFFFFFFFUL
 
 typedef u_base_type raw_data_type;
-
-//base_type msb(u_base_type x){
-//    if(x == 0){ return -1; }
-//    base_type m = 0;
-//    if(x & 0xFFFF0000){ m |= 16; x >>= 16; }
-//    if(x & 0xFF00){ m |= 8; x >>= 8; }
-//    if(x & 0xF0){ m |= 4; x >>= 4; }
-//    if(x & 0xC){ m |= 2; x >>= 2; }
-//    if(x & 0x2){ m |= 1; }
-//    return m;
-//}
-//
-//base_type msbs(const raw_data_type *x){
-//    for(base_type i = 0; i < PREC; ++i){
-//        base_type m = msb(x[i]);
-//        if(m >= 0){ return m + ((PREC - i - 1) << 5); }
-//    }
-//    return -1;
-//}
 
 // compare
 base_type compare(const raw_data_type *z, const raw_data_type *w){
@@ -161,7 +145,6 @@ void to_abs(fixed_point *z){
 // z := 0
 void set_zero(fixed_point *z){
     z->sign = 0;
-    //zero_clear(z->data);
 }
 
 // z := x
@@ -287,8 +270,8 @@ void mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
         z->sign = 0;
         return;
     }
-    z->sign = v->sign * w->sign;
     u_base2_type carry2 = 0;
+    z->sign = v->sign * w->sign;
     for(base_type i = 0; i < PREC; ++i){
         for(base_type j = 0; j < PREC; ++j){
             base_type k = i + j;
@@ -300,106 +283,42 @@ void mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
     }
 }
 
-// z mod w
-u_base_type mod_by_word(const fixed_point *z, u_base_type w){
-    u_base2_type p = 1;
-    u_base2_type r = 0;
-    for(base_type i = 0; i < PREC; ++i){
-        for(base_type bit = 0; bit < BASE2_TYPE_SIZE / 2; ++bit){
-            if((z->data[i] & (1 << bit)) != 0){
-                r += p;
-                if(r >= w){
-                    r -= w;
-                }
-            }
-            p <<= 1;
-            if(p >= w){
-                p -= w;
-            }
-        }
+// z. := v. * w.
+void fp_mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
+    if(v->sign == 0 || w->sign == 0){
+        z->sign = 0;
+        return;
     }
-    return (u_base_type)r;
-}
-
-// r := z mod w
-void mod(fixed_point *r, const fixed_point *z, const fixed_point *w){
-    fixed_point p_, *p = &p_;
-    set_zero(p);
-    set_zero(r);
-    p->data[0] = 1;
+    zero_clear(z->data);
+    z->sign = v->sign * w->sign;
+    u_base_type buff[PREC * 2];
+    for(base_type i = 0; i < PREC * 2; ++i){ buff[i] = 0; }
     for(base_type i = 0; i < PREC; ++i){
-        for(base_type bit = 0; bit < PREC; ++bit){
-            if((z->data[i] & (1 << bit)) != 0){
-                add(r, p);
-                if(compare(r, w) >= 0){
-                    sub(r, w);
-                }
-            }
-            u_base_type carry = mul_pow2(p, 1);
-            if(carry > 0 || compare(p, w) >= 0){
-                fixed_point temp = *w;
-                sub(&temp, p);
-                *p = temp;
-            }
+        u_base2_type carry2 = 0;
+        for(base_type j = 0; j < PREC; ++j){
+            base_type k = i + j;
+            u_base2_type n = (u_base2_type)(v->data[i]) * (u_base2_type)(w->data[j]) + carry2;
+            buff[k] += (u_base_type)(n & BASE2_TYPE_MASK);
+            carry2 = (u_base_type)(n >> (BASE2_TYPE_SIZE / 2));
         }
+        buff[i + PREC] += (u_base_type)carry2;
+    }
+    for(base_type i = 0; i < PREC; ++i){
+        z->data[i] = buff[PREC + i - 1];
     }
 }
 
 // r := z / w
-void div_by_word(fixed_point *r, const fixed_point *z, u_base_type w){
-    set_base(r, 1);
+void div_by_word(fixed_point *z, const fixed_point *v, u_base_type w){
+    set_zero(z);
+    zero_clear(z->data);
     u_base2_type dividend = 0;
     for(base_type i = PREC - 1; i >= 0; --i){
-        dividend |= z->data[i];
-        r->data[i] = (u_base_type)(dividend / w);
+        dividend |= v->data[i];
+        z->data[i] = (u_base_type)(dividend / w);
         dividend = (dividend % w) << (BASE2_TYPE_SIZE / 2);
     }
-}
-
-void str_to_fixed_point(fixed_point *z, const char *str, u_base_type n){
-    fixed_point p_, *p = &p_;
-    set_zero(z);
-    set_base(p, 1);
-    for(base_type i = 0; str[i] != '\0'; ++i){
-        mul_by_word(z, n);
-        p->data[0] = str[i] - '0';
-        add(z, p);
-    }
-}
-
-void digit_to_fixed_point(fixed_point *z, const char *str){
-    str_to_fixed_point(z, str, 10);
-}
-
-void hex_to_fixed_point(fixed_point *z, const char *str){
-    str_to_fixed_point(z, str, 0x10);
-}
-
-void fixed_point_to_str(char *buff, const fixed_point *z_prime, u_base_type n){
-    fixed_point z_, *z = &z_;
-    fixed_point p_, *p = &p_;
-    z_ = *z_prime;
-    set_base(p, n);
-    if(check_zero(z)){
-        buff[0] = '0';
-        buff[1] = '\0';
-        return;
-    }else{
-        base_type i;
-        for(base_type i = 0; check_zero(z); ++i){
-            buff[i] = (char)(mod_by_word(z, n) + '0');
-            div_by_word(z, z, n);
-        }
-        buff[i] = '\0';
-    }
-}
-
-void fixed_point_to_digit(char *buff, const fixed_point *z){
-    fixed_point_to_str(buff, z, 10);
-}
-
-void fixed_point_to_hex(char *buff, const fixed_point *z){
-    fixed_point_to_str(buff, z, 0x10);
+    zero_normalize(z);
 }
 
 __kernel void cl_main(
@@ -422,7 +341,7 @@ __kernel void cl_main(
         g.data[i] = g_[i];
     }
 
-    mul(&h, &f, &g);
+    fp_mul(&h, &f, &g);
 
     // out f
     *sign_f = h.sign;
