@@ -116,6 +116,9 @@ struct fixed_point{
     std::string to_fp_string() const{
         if(sign == 0){ return "0"; }
         std::string result;
+        if(sign < 0){
+            result += "-";
+        }
         {
             fixed_point integer(integral_part, 0, 0);
             integer.sign = 1;
@@ -146,37 +149,152 @@ struct fixed_point{
         return result;
     }
 
-    static void fp_mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
-        if(v->sign == 0 || w->sign == 0){
-            z->sign = 0;
+    void fp_mul(const fixed_point &v, const fixed_point &w){
+        if(v.sign == 0 || w.sign == 0){
+            sign = 0;
             return;
         }
-        z->sign = v->sign * w->sign;
-        std::unique_ptr<uint32_t[]> buff_instance(new uint32_t[v->precision + w->precision]);
+        sign = v.sign * w.sign;
+        std::unique_ptr<uint32_t[]> buff_instance(new uint32_t[precision * 2]);
         uint32_t *buff = buff_instance.get();
-        for(std::size_t i = 0; i < z->precision * 2; ++i){ buff[i] = 0; }
-        for(std::size_t i = 0; i < v->precision; ++i){
+        for(std::size_t i = 0; i < precision * 2; ++i){ buff[i] = 0; }
+        for(std::size_t i = 0; i < v.precision; ++i){
             uint64_t carry2 = 0;
-            for(std::size_t j = 0; j < w->precision; ++j){
+            for(std::size_t j = 0; j < w.precision; ++j){
                 std::size_t k = i + j;
-                uint64_t n = (uint64_t)(v->data[i]) * (uint64_t)(w->data[j]) + carry2;
-                buff[k] += (uint32_t)(n & BASE2_TYPE_MASK);
-                carry2 = (uint32_t)(n >> (BASE2_TYPE_SIZE / 2));
+                uint64_t n = static_cast<uint64_t>(v.data[i]) * static_cast<uint64_t>(w.data[j]) + carry2;
+                buff[k] += static_cast<uint32_t>(n & BASE2_TYPE_MASK);
+                carry2 = static_cast<uint32_t>(n >> (BASE2_TYPE_SIZE / 2));
             }
-            buff[i + w->precision] += (uint32_t)carry2;
+            buff[i + w.precision] += static_cast<uint32_t>(carry2);
         }
-        for(std::size_t i = 0; i < z->precision; ++i){
-            z->data[i] = buff[z->precision + i - 1];
+        for(std::size_t i = 0; i < precision; ++i){
+            data[i] = buff[precision + i - 1];
+        }
+    }
+
+    void add(const fixed_point &w){
+        if(w.sign == 0){ return; }
+        if(sign == 0){
+            primitive_set_fixed_point(w);
+            return;
+        }
+        if(sign == w.sign){
+            primitive_add_n(w);
+            return;
+        }
+        int u = primitive_compare(*this, w);
+        if(u != 0){
+            if(u > 0){
+                primitive_sub_n(w);
+            }else{
+                fixed_point temp(integral_part, fraction_part, 1);
+                temp.primitive_set_fixed_point(*this);
+                primitive_set_fixed_point(w);
+                primitive_sub_n(temp);
+                sign = -sign;
+            }
+            primitive_zero_normalize();
+        }else{
+            primitive_set_zero();
+        }
+    }
+
+    void sub(const fixed_point &w){
+        if(w.sign == 0){ return; }
+        if(sign == 0){
+            primitive_set_fixed_point(w);
+            sign = -sign;
+        }
+        if(sign != w.sign){
+            primitive_add_n(w);
+            return;
+        }
+        int u = primitive_compare(*this, w);
+        if(u != 0){
+            if(u > 0){
+                primitive_sub_n(w);
+            }else{
+                fixed_point temp(integral_part, fraction_part, 1);
+                temp.primitive_set_fixed_point(*this);
+                primitive_set_fixed_point(w);
+                primitive_sub_n(temp);
+                sign = -sign;
+            }
+            primitive_zero_normalize();
+        }else{
+            primitive_set_zero();
         }
     }
 
 private:
+    void primitive_mul_inv(const fixed_point &v){
+        fixed_point t(integral_part, fraction_part, 1);
+        t.data[fraction_part] = 0;
+        for(std::size_t i = 0; i < precision; ++i){ data[i] = v.data[i]; }
+        while(true){
+            t.primitive_mul_with_sign(v, *this);
+            if(t.sign == 1 && t.data[0] == 1){
+                bool f = true;
+                for(std::size_t i = precision - 1; i > 0; ++i){ f = f && t.data[i] == 0; }
+                if(f){ return; }
+            }
+        }
+    }
+
+    void primitive_mul_with_sign(const fixed_point &v, const fixed_point &w){
+        if(v.sign == 0 || w.sign == 0){
+            sign = 0;
+            return;
+        }
+        for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
+        sign = v.sign * w.sign;
+        for(std::size_t i = 0; i < precision; ++i){
+            uint64_t carry2 = 0;
+            for(std::size_t j = 0; j < precision; ++j){
+                std::size_t k = i + j;
+                if(k > precision){ continue; }
+                uint64_t n = (uint64_t)(v.data[i]) * (uint64_t)(w.data[j]) + carry2;
+                data[k] += (uint32_t)(n & BASE2_TYPE_MASK);
+                carry2 = (uint32_t)(n >> (BASE2_TYPE_SIZE / 2));
+            }
+            data[i + precision] += (uint32_t)carry2;
+        }
+    }
+
     void primitive_add_n(const fixed_point &w){
         uint64_t carry2 = 0;
         for(std::size_t i = 0; i < precision; ++i){
             carry2 += static_cast<uint64_t>(data[i]) + w.data[i];
-            data[i] = static_cast<uint64_t>(carry2 & BASE2_TYPE_MASK);
+            data[i] = static_cast<uint32_t>(carry2 & BASE2_TYPE_MASK);
             carry2 >>= (BASE2_TYPE_SIZE / 2);
+        }
+    }
+
+    void primitive_add_n_by_single(uint32_t w){
+        uint64_t carry2 = w;
+        for(std::size_t i = 0; i < precision; ++i){
+            carry2 += static_cast<uint64_t>(data[i]);
+            data[i] = static_cast<uint32_t>(carry2 & BASE2_TYPE_MASK);
+            carry2 >>= (BASE2_TYPE_SIZE / 2);
+        }
+    }
+
+    void primitive_sub_n(const fixed_point &w){
+        uint64_t borrow2 = 0;
+        for(std::size_t i = 0; i < precision; ++i){
+            uint64_t x = static_cast<uint64_t>(data[i]) - static_cast<uint64_t>(w.data[i]) - borrow2;
+            data[i] = static_cast<uint32_t>(x & BASE2_TYPE_MASK);
+            borrow2 = x > BASE2_TYPE_MASK ? 1 : 0;
+        }
+    }
+
+    void primitive_sub_n_by_single(uint32_t w){
+        uint64_t borrow2 = w;
+        for(std::size_t i = 0; i < precision; ++i){
+            uint64_t x = static_cast<uint64_t>(data[i]) - borrow2;
+            data[i] = static_cast<uint32_t>(x & BASE2_TYPE_MASK);
+            borrow2 = x > BASE2_TYPE_MASK ? 1 : 0;
         }
     }
 
@@ -223,6 +341,29 @@ private:
         }
         return true;
     }
+
+    void primitive_set_fixed_point(const fixed_point &w){
+        if(this == &w){ return; }
+        sign = w.sign;
+        for(std::size_t i = 0; i < precision; ++i){ data[i] = w.data[i]; }
+    }
+
+    int primitive_compare(const fixed_point &z, const fixed_point &w){
+        for(int i = static_cast<int>(z.precision - 1); i >= 0; --i){
+            if(z.data[i] > w.data[i]){ return 1; }
+            if(z.data[i] < w.data[i]){ return -1; }
+        }
+        return 0;
+    }
+
+    void primitive_set_zero(){
+        sign = 0;
+    }
+
+    void primitive_zero_normalize(){
+        if(sign == 0){ return; }
+        if(primitive_check_zero()){ sign = 0; }
+    }
 };
 
 int main(){
@@ -261,42 +402,33 @@ int main(){
         cl::Program program(context, sources);
         program.build(devices);
 
-        fixed_point f(g_integral_part, g_fraction_part, "1024201", "9876543210123456789");
+        fixed_point
+            f(g_integral_part, g_fraction_part, "24201", "123456789"),
+            g(g_integral_part, g_fraction_part, "48402", "987654321");
+
+        cl::Buffer
+            f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
+            f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
+            g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
+            g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
+        queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
+        queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
+        queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
+        queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
+
+        cl::Kernel kernel(program, "cl_main");
+        kernel.setArg(0, f_sign_buffer);
+        kernel.setArg(1, f_buffer);
+        kernel.setArg(2, g_sign_buffer);
+        kernel.setArg(3, g_buffer);
+
+        cl::Event event;
+        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
+        event.wait();
+        queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
+        queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+
         std::cout << f.to_fp_string() << std::endl;
-
-        //fixed_point
-        //    f(g_integral_part, g_fraction_part, 1),
-        //    g(g_integral_part, g_fraction_part, 2),
-        //    h(g_integral_part, g_fraction_part, 1);
-        //f.data[4] = 1;
-        //f.data[3] = 0x80000000;
-        //f.data[0] = f.data[1] = f.data[2] = 0;
-        //std::cout << f.to_fp_string() << std::endl;
-        //std::cout << g.to_fp_string() << std::endl;
-
-        //cl::Buffer
-        //    f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
-        //    f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
-        //    g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
-        //    g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
-        //queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
-        //queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
-        //queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
-        //queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
-
-        //cl::Kernel kernel(program, "cl_main");
-        //kernel.setArg(0, f_sign_buffer);
-        //kernel.setArg(1, f_buffer);
-        //kernel.setArg(2, g_sign_buffer);
-        //kernel.setArg(3, g_buffer);
-
-        //cl::Event event;
-        //queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
-        //event.wait();
-        //queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
-        //queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
-
-        //std::cout << f.to_fp_string() << std::endl;
     }catch(cl::Error err){
         std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
     }catch(std::exception err){

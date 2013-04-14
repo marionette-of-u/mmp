@@ -199,6 +199,7 @@ void add(fixed_point *z, const fixed_point *w){
             copy_array(temp, z->data);
             set_fixed_point(z, w);
             sub_n(z->data, temp, 0);
+            z->sign = -z->sign;
         }
         zero_normalize(z);
     }else{
@@ -227,6 +228,7 @@ void sub(fixed_point *z, const fixed_point *w){
             copy_array(temp, z->data);
             set_fixed_point(z, w);
             sub_n(z->data, temp, 0);
+            z->sign = -z->sign;
         }
         zero_normalize(z);
     }else{
@@ -321,11 +323,11 @@ __kernel void cl_main(
         g.data[i] = g_[i];
     }
 
-    fp_mul(&h, &f, &g);
+    sub(&f, &g);
 
     // out f
-    *sign_f = h.sign;
+    *sign_f = f.sign;
     for(base_type i = 0; i < PREC; ++i){
-        f_[i] = h.data[i];
+        f_[i] = f.data[i];
     }
 }
