@@ -173,6 +173,13 @@ struct fixed_point{
         }
     }
 
+    void div(const fixed_point &v, const fixed_point &w){
+        fixed_point x(integral_part, fraction_part, 0);
+        x.primitive_set_fixed_point(w);
+        x.primitive_mul_inv();
+        fp_mul(v, x);
+    }
+
     void add(const fixed_point &w){
         if(w.sign == 0){ return; }
         if(sign == 0){
@@ -227,6 +234,7 @@ struct fixed_point{
         }
     }
 
+private:
     void primitive_mul_inv(){
         if((data[0] & 1) == 0){ data[0] += 1; }
         fixed_point
@@ -237,10 +245,21 @@ struct fixed_point{
         while(true){
             t.primitive_mul_with_sign(*this, xn);
             std::cout << t.to_string() << std::endl;
-            if(t.sign == 1 && t.data[0] == 1){
+            if(t.sign == 1){
+                if(t.data[0] == 1){
+                    bool f = true;
+                    for(std::size_t i = 1; f && i < precision; ++i){
+                        f = f && t.data[i] == 0;
+                    }
+                    if(f){
+                        primitive_set_fixed_point(xn);
+                        return;
+                    }
+                }
+            }else if(t.sign == -1){
                 bool f = true;
-                for(std::size_t i = 1; f && i < precision; ++i){
-                    f = f && t.data[i] == 0;
+                for(std::size_t i = 0; f && i < precision; ++i){
+                    f = f && t.data[i] == static_cast<uint32_t>(BASE2_TYPE_MASK);
                 }
                 if(f){
                     primitive_set_fixed_point(xn);
@@ -254,7 +273,6 @@ struct fixed_point{
         }
     }
 
-private:
     void primitive_mul_with_sign(const fixed_point &v, const fixed_point &w){
         if(v.sign == 0 || w.sign == 0){
             sign = 0;
@@ -266,12 +284,11 @@ private:
             uint64_t carry2 = 0;
             for(std::size_t j = 0; j < precision; ++j){
                 std::size_t k = i + j;
-                if(k > precision){ continue; }
+                if(k >= precision){ continue; }
                 uint64_t n = (uint64_t)(v.data[i]) * (uint64_t)(w.data[j]) + carry2;
                 data[k] += (uint32_t)(n & BASE2_TYPE_MASK);
                 carry2 = (uint32_t)(n >> (BASE2_TYPE_SIZE / 2));
             }
-            data[i + precision] += (uint32_t)carry2;
         }
     }
 
@@ -415,14 +432,11 @@ int main(){
         cl::Program program(context, sources);
         program.build(devices);
 
-        //fixed_point
-        //    f(g_integral_part, g_fraction_part, "24201", "123456789"),
-        //    g(g_integral_part, g_fraction_part, "48402", "987654321");
-        fixed_point f(g_integral_part, g_fraction_part, 0);
-        f.sign = 1;
-        f.data[0] = 3;
-
-        f.primitive_mul_inv();
+        fixed_point
+            f(g_integral_part, g_fraction_part, "1", "0"),
+            g(g_integral_part, g_fraction_part, "3", "0"),
+            h(g_integral_part, g_fraction_part, "1", "0");
+        h.div(f, g);
 
         //cl::Buffer
         //    f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
@@ -446,7 +460,7 @@ int main(){
         //queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
         //queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
 
-        std::cout << f.to_fp_string() << std::endl;
+        std::cout << h.to_fp_string() << std::endl;
     }catch(cl::Error err){
         std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
     }catch(std::exception err){
