@@ -173,11 +173,7 @@ struct fixed_point{
         }
     }
 
-    void div(const fixed_point &v, const fixed_point &w){
-        fixed_point x(integral_part, fraction_part, 0);
-        x.primitive_set_fixed_point(w);
-        x.primitive_mul_inv();
-        fp_mul(v, x);
+    void fp_div(const fixed_point &v, const fixed_point &w){
     }
 
     void add(const fixed_point &w){
@@ -285,9 +281,9 @@ private:
             for(std::size_t j = 0; j < precision; ++j){
                 std::size_t k = i + j;
                 if(k >= precision){ continue; }
-                uint64_t n = (uint64_t)(v.data[i]) * (uint64_t)(w.data[j]) + carry2;
-                data[k] += (uint32_t)(n & BASE2_TYPE_MASK);
-                carry2 = (uint32_t)(n >> (BASE2_TYPE_SIZE / 2));
+                uint64_t n = static_cast<uint64_t>(v.data[i]) * static_cast<uint64_t>(w.data[j]) + carry2;
+                data[k] += static_cast<uint32_t>(n & BASE2_TYPE_MASK);
+                carry2 = static_cast<uint32_t>(n >> (BASE2_TYPE_SIZE / 2));
             }
         }
     }
