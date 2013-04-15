@@ -174,7 +174,7 @@ struct fixed_point{
     }
 
     void fp_div(const fixed_point &u, const fixed_point &v){
-        if(u.primitive_check_zero()){
+        if(u.sign == 0){
             primitive_set_zero();
             return;
         }
