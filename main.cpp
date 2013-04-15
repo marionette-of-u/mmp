@@ -173,7 +173,77 @@ struct fixed_point{
         }
     }
 
-    void fp_div(const fixed_point &v, const fixed_point &w){
+    void fp_div(const fixed_point &u, const fixed_point &v){
+        if(u.primitive_check_zero()){
+            primitive_set_zero();
+            return;
+        }
+        sign = u.sign * v.sign;
+
+        const int32_t m = u.primitive_degree() + 1, n = v.primitive_degree() + 1;
+        const uint64_t b = static_cast<uint64_t>(BASE2_TYPE_MASK) + 1;
+        uint32_t *un, *vn;
+        uint64_t qhat, rhat, p;
+        int64_t s, i, j, t, k;
+        if(n == 1){
+            k = 0;
+            for(j = m - 1; j >= 0; --j){
+                data[j] = static_cast<uint32_t>((k * b + u.data[j]) / v.data[0]);
+                k = (k * b + u.data[j]) - data[j] * v.data[0];
+            }
+            return;
+        }
+
+        s = primitive_nlz(v.data[n - 1]);
+        std::unique_ptr<uint32_t[]> vn_scoped_guard(new uint32_t[2 * precision]);
+        vn = vn_scoped_guard.get();
+        for(i = n - 1; i > 0; --i){
+            vn[i] = (v.data[i] << s) | (v.data[i - 1] >> (BASE2_TYPE_SIZE / 2 - s));
+        }
+        vn[0] = v.data[0] << s;
+
+        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[2 * (m + 1)]);
+        un = un_scoped_guard.get();
+        un[m] = u.data[m - 1] >> (BASE2_TYPE_SIZE / 2 - s);
+        for(i = m - 1; i > 0; --i){
+            un[i] = (u.data[i] << s) | (u.data[i - 1] >> (BASE2_TYPE_SIZE / 2 - s));
+        }
+        un[0] = u.data[0] << s;
+
+        for(j = m - n; j >= 0; --j){
+            qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
+            rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
+
+            do{
+                if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j + n - 2]){
+                    --qhat;
+                    rhat += vn[n - 1];
+                    if(rhat < b){ continue; }
+                }
+            }while(false);
+
+            k = 0;
+            for(i = 0; i < n; ++i){
+                p = qhat * vn[i];
+                t = un[i + j] - k - (p & BASE2_TYPE_MASK);
+                un[i + j] = static_cast<uint32_t>(t);
+                k = (p >> (BASE2_TYPE_SIZE / 2)) - (t >> (BASE2_TYPE_SIZE / 2));
+            }
+            t = un[j + n] - k;
+            un[j + n] = static_cast<uint32_t>(t);
+
+            data[j] = static_cast<uint32_t>(qhat);
+            if(t < 0){
+                --data[j];
+                k = 0;
+                for(i = 0; i < n; ++i){
+                    t = un[i + j] + vn[i] + k;
+                    un[i + j] = static_cast<uint32_t>(t);
+                    k = t >> (BASE2_TYPE_SIZE / 2);
+                }
+                un[j + n] += static_cast<uint32_t>(k);
+            }
+        }
     }
 
     void add(const fixed_point &w){
@@ -288,6 +358,13 @@ private:
         }
     }
 
+    int32_t primitive_degree() const{
+        if(sign == 0){ return 0; }
+        int32_t n = static_cast<int32_t>(precision - 1);
+        while(data[n] == 0){ --n; }
+        return n;
+    }
+
     void primitive_add_n(const fixed_point &w){
         uint64_t carry2 = 0;
         for(std::size_t i = 0; i < precision; ++i){
@@ -390,6 +467,17 @@ private:
         if(sign == 0){ return; }
         if(primitive_check_zero()){ sign = 0; }
     }
+
+    static int32_t primitive_nlz(int32_t x){
+        int32_t y = x, n = 0;
+        while(true){
+            if(x < 0){ return n; }
+            if(y == 0){ return BASE2_TYPE_SIZE / 2 - n; }
+            ++n;
+            x <<= 1;
+            y >>= 1;
+        }
+    }
 };
 
 int main(){
@@ -429,10 +517,10 @@ int main(){
         program.build(devices);
 
         fixed_point
-            f(g_integral_part, g_fraction_part, "1", "0"),
-            g(g_integral_part, g_fraction_part, "3", "0"),
-            h(g_integral_part, g_fraction_part, "1", "0");
-        h.div(f, g);
+            f(g_integral_part, g_fraction_part, "125", "0"),
+            g(g_integral_part, g_fraction_part, "0", "5"),
+            h(g_integral_part, g_fraction_part, 0);
+        h.fp_div(f, g);
 
         //cl::Buffer
         //    f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
