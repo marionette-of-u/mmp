@@ -103,12 +103,12 @@ struct fixed_point{
         std::string result;
         fixed_point temp(integral_part, fraction_part, 0);
         temp.sign = sign;
-        if(sign < 0){ result.append("-"); }
         for(std::size_t i = 0; i < precision; ++i){ temp.data[i] = data[i]; }
         for(std::size_t i = 0; !temp.primitive_check_zero(); ++i){
             result.push_back(static_cast<char>(temp.primitive_mod_by_single(10) + '0'));
             temp.primitive_div_by_single(10);
         }
+        if(sign < 0){ result.push_back('-'); }
         std::reverse(result.begin(), result.end());
         return result;
     }
@@ -227,21 +227,34 @@ struct fixed_point{
         }
     }
 
-private:
-    void primitive_mul_inv(const fixed_point &v){
-        fixed_point t(integral_part, fraction_part, 1);
-        t.data[fraction_part] = 0;
-        for(std::size_t i = 0; i < precision; ++i){ data[i] = v.data[i]; }
+    void primitive_mul_inv(){
+        if((data[0] & 1) == 0){ data[0] += 1; }
+        fixed_point
+            xn(integral_part, fraction_part, 0),
+            t(integral_part, fraction_part, 0),
+            u(integral_part, fraction_part, 0);
+        xn.primitive_set_fixed_point(*this);
         while(true){
-            t.primitive_mul_with_sign(v, *this);
+            t.primitive_mul_with_sign(*this, xn);
+            std::cout << t.to_string() << std::endl;
             if(t.sign == 1 && t.data[0] == 1){
                 bool f = true;
-                for(std::size_t i = precision - 1; i > 0; ++i){ f = f && t.data[i] == 0; }
-                if(f){ return; }
+                for(std::size_t i = 1; f && i < precision; ++i){
+                    f = f && t.data[i] == 0;
+                }
+                if(f){
+                    primitive_set_fixed_point(xn);
+                    return;
+                }
             }
+            t.sign = -t.sign;
+            t.primitive_add_n_by_single(2);
+            u.primitive_mul_with_sign(xn, t);
+            xn.primitive_set_fixed_point(u);
         }
     }
 
+private:
     void primitive_mul_with_sign(const fixed_point &v, const fixed_point &w){
         if(v.sign == 0 || w.sign == 0){
             sign = 0;
@@ -402,31 +415,36 @@ int main(){
         cl::Program program(context, sources);
         program.build(devices);
 
-        fixed_point
-            f(g_integral_part, g_fraction_part, "24201", "123456789"),
-            g(g_integral_part, g_fraction_part, "48402", "987654321");
+        //fixed_point
+        //    f(g_integral_part, g_fraction_part, "24201", "123456789"),
+        //    g(g_integral_part, g_fraction_part, "48402", "987654321");
+        fixed_point f(g_integral_part, g_fraction_part, 0);
+        f.sign = 1;
+        f.data[0] = 3;
 
-        cl::Buffer
-            f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
-            f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
-            g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
-            g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
-        queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
-        queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
-        queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
-        queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
+        f.primitive_mul_inv();
 
-        cl::Kernel kernel(program, "cl_main");
-        kernel.setArg(0, f_sign_buffer);
-        kernel.setArg(1, f_buffer);
-        kernel.setArg(2, g_sign_buffer);
-        kernel.setArg(3, g_buffer);
+        //cl::Buffer
+        //    f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
+        //    f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
+        //    g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
+        //    g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
+        //queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
+        //queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
+        //queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
+        //queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
 
-        cl::Event event;
-        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
-        event.wait();
-        queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
-        queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+        //cl::Kernel kernel(program, "cl_main");
+        //kernel.setArg(0, f_sign_buffer);
+        //kernel.setArg(1, f_buffer);
+        //kernel.setArg(2, g_sign_buffer);
+        //kernel.setArg(3, g_buffer);
+
+        //cl::Event event;
+        //queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
+        //event.wait();
+        //queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
+        //queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
 
         std::cout << f.to_fp_string() << std::endl;
     }catch(cl::Error err){
