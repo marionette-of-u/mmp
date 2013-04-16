@@ -179,59 +179,51 @@ struct fixed_point{
             return;
         }
         sign = u.sign * v.sign;
-
         const int32_t m = u.primitive_degree() + 1, n = v.primitive_degree() + 1;
         const uint64_t b = static_cast<uint64_t>(BASE2_TYPE_MASK) + 1;
         uint32_t *un, *vn;
         uint64_t qhat, rhat, p;
-        int64_t s, i, j, t, k;
+        int64_t i, j, t, k;
         if(n == 1){
             k = 0;
             for(j = m - 1; j >= 0; --j){
                 data[j] = static_cast<uint32_t>((k * b + u.data[j]) / v.data[0]);
                 k = (k * b + u.data[j]) - data[j] * v.data[0];
             }
-            return;
         }
-
-        s = primitive_nlz(v.data[n - 1]);
-        std::unique_ptr<uint32_t[]> vn_scoped_guard(new uint32_t[2 * precision]);
+        const uint32_t s = primitive_nlz(v.data[n - 1]);
+        std::unique_ptr<uint32_t[]> vn_scoped_guard(new uint32_t[precision * 2]);
         vn = vn_scoped_guard.get();
         for(i = n - 1; i > 0; --i){
-            vn[i] = (v.data[i] << s) | (v.data[i - 1] >> (BASE2_TYPE_SIZE / 2 - s));
+            vn[i] = static_cast<uint32_t>(primitive_s_lshift(v.data[i], s) | primitive_s_rshift(v.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
         }
-        vn[0] = v.data[0] << s;
-
-        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[2 * (m + 1)]);
+        vn[0] = static_cast<uint32_t>(primitive_s_lshift(v.data[0], s));
+        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2]);
         un = un_scoped_guard.get();
-        un[m] = u.data[m - 1] >> (BASE2_TYPE_SIZE / 2 - s);
+        un[m] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], (BASE2_TYPE_SIZE / 2 - s + 1)));
         for(i = m - 1; i > 0; --i){
-            un[i] = (u.data[i] << s) | (u.data[i - 1] >> (BASE2_TYPE_SIZE / 2 - s));
+            un[i] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
         }
-        un[0] = u.data[0] << s;
-
+        un[0] = static_cast<uint32_t>(primitive_s_lshift(u.data[0], s));
         for(j = m - n; j >= 0; --j){
             qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
             rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
-
             do{
-                if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j + n - 2]){
+                if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j - n - 2]){
                     --qhat;
                     rhat += vn[n - 1];
                     if(rhat < b){ continue; }
                 }
             }while(false);
-
             k = 0;
             for(i = 0; i < n; ++i){
                 p = qhat * vn[i];
                 t = un[i + j] - k - (p & BASE2_TYPE_MASK);
                 un[i + j] = static_cast<uint32_t>(t);
-                k = (p >> (BASE2_TYPE_SIZE / 2)) - (t >> (BASE2_TYPE_SIZE / 2));
+                k = primitive_s_rshift(p, BASE2_TYPE_SIZE / 2) - primitive_s_rshift(t, BASE2_TYPE_SIZE / 2);
             }
             t = un[j + n] - k;
             un[j + n] = static_cast<uint32_t>(t);
-
             data[j] = static_cast<uint32_t>(qhat);
             if(t < 0){
                 --data[j];
@@ -239,9 +231,8 @@ struct fixed_point{
                 for(i = 0; i < n; ++i){
                     t = un[i + j] + vn[i] + k;
                     un[i + j] = static_cast<uint32_t>(t);
-                    k = t >> (BASE2_TYPE_SIZE / 2);
                 }
-                un[j + n] += static_cast<uint32_t>(k);
+                k = primitive_s_rshift(t, BASE2_TYPE_SIZE / 2);
             }
         }
     }
@@ -468,87 +459,108 @@ private:
         if(primitive_check_zero()){ sign = 0; }
     }
 
-    static int32_t primitive_nlz(int32_t x){
-        int32_t y = x, n = 0;
-        while(true){
-            if(x < 0){ return n; }
-            if(y == 0){ return BASE2_TYPE_SIZE / 2 - n; }
-            ++n;
-            x <<= 1;
-            y >>= 1;
-        }
+    static int32_t primitive_nlz(uint32_t x){
+        uint32_t y;
+        int32_t n = BASE2_TYPE_SIZE / 2, c = n / 2;
+        do{
+            y = x >> c;
+            if(y != 0){
+                n -= c;
+                x = y;
+            }
+            c >>= 1;
+        }while(c != 0);
+        return n - static_cast<int32_t>(x);
+    }
+
+    static uint64_t primitive_s_lshift(uint64_t x, int32_t n){
+        if(n >= BASE2_TYPE_SIZE / 2){ return 0; }
+        return x << n;
+    }
+
+    static uint64_t primitive_s_rshift(uint64_t x, int32_t n){
+        if(n >= BASE2_TYPE_SIZE / 2){ return 0; }
+        return x >> n;
     }
 };
 
 int main(){
-    cl_int err = CL_SUCCESS;
-    try{
-        std::ifstream ifile("cl/cl.cl", std::ios::binary | std::ios::ate);
-        std::vector<char> cl_source;
-        if(ifile.fail()){
-            throw(std::exception("can not open the file \"cl/cl.cl\"."));
-        }
-        cl_source.resize((std::size_t)ifile.tellg());
-        ifile.seekg(0, ifile.beg);
-        ifile.read(&cl_source[0], cl_source.size());
+    fixed_point
+        f(g_integral_part, g_fraction_part, "125", "75"),
+        g(g_integral_part, g_fraction_part, "0", "5"),
+        h(g_integral_part, g_fraction_part, 0);
+    h.fp_div(f, g);
+    std::cout << f.to_string() << std::endl;
+    std::cout << g.to_string() << std::endl;
+    std::cout << h.to_string() << std::endl;
 
-        std::vector<cl::Platform> platforms;
-        cl::Platform::get(&platforms);
-        if(platforms.size() == 0){
-            std::cerr << "Platform size 0" << std::endl;
-            return -1;
-        }
+    //cl_int err = CL_SUCCESS;
+    //try{
+    //    unsigned short q[5] = { 0 };
+    //    unsigned short u[5] = { 0, 0, 0, 0xC000, 0x007D }, v[5] = { 0, 0, 0, 0x8000, 0 };
+    //    divmnu(q, nullptr, u, v, 5, 4);
 
-        cl::Platform platform = platforms[0];
-        cl_context_properties properties[] = {
-            CL_CONTEXT_PLATFORM,
-            reinterpret_cast<cl_context_properties>(platform()),
-            0
-        };
-        cl::Context context(CL_DEVICE_TYPE_GPU, properties);
+    //    std::ifstream ifile("cl/cl.cl", std::ios::binary | std::ios::ate);
+    //    std::vector<char> cl_source;
+    //    if(ifile.fail()){
+    //        throw(std::exception("can not open the file \"cl/cl.cl\"."));
+    //    }
+    //    cl_source.resize((std::size_t)ifile.tellg());
+    //    ifile.seekg(0, ifile.beg);
+    //    ifile.read(&cl_source[0], cl_source.size());
 
-        std::vector<cl::Device> devices = context.getInfo<CL_CONTEXT_DEVICES>();
-        cl::Device device = devices[0];
-        cl::CommandQueue queue(context, device);
+    //    std::vector<cl::Platform> platforms;
+    //    cl::Platform::get(&platforms);
+    //    if(platforms.size() == 0){
+    //        std::cerr << "Platform size 0" << std::endl;
+    //        return -1;
+    //    }
 
-        cl::Program::Sources sources;
-        sources.push_back(std::make_pair(&cl_source[0], cl_source.size()));
-        cl::Program program(context, sources);
-        program.build(devices);
+    //    cl::Platform platform = platforms[0];
+    //    cl_context_properties properties[] = {
+    //        CL_CONTEXT_PLATFORM,
+    //        reinterpret_cast<cl_context_properties>(platform()),
+    //        0
+    //    };
+    //    cl::Context context(CL_DEVICE_TYPE_GPU, properties);
 
-        fixed_point
-            f(g_integral_part, g_fraction_part, "125", "0"),
-            g(g_integral_part, g_fraction_part, "0", "5"),
-            h(g_integral_part, g_fraction_part, 0);
-        h.fp_div(f, g);
+    //    std::vector<cl::Device> devices = context.getInfo<CL_CONTEXT_DEVICES>();
+    //    cl::Device device = devices[0];
+    //    cl::CommandQueue queue(context, device);
 
-        //cl::Buffer
-        //    f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
-        //    f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
-        //    g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
-        //    g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
-        //queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
-        //queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
-        //queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
-        //queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
+    //    cl::Program::Sources sources;
+    //    sources.push_back(std::make_pair(&cl_source[0], cl_source.size()));
+    //    cl::Program program(context, sources);
+    //    program.build(devices);
 
-        //cl::Kernel kernel(program, "cl_main");
-        //kernel.setArg(0, f_sign_buffer);
-        //kernel.setArg(1, f_buffer);
-        //kernel.setArg(2, g_sign_buffer);
-        //kernel.setArg(3, g_buffer);
+    //    // f, g decl and operation...
 
-        //cl::Event event;
-        //queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
-        //event.wait();
-        //queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
-        //queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+    //    cl::Buffer
+    //        f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
+    //        f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
+    //        g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
+    //        g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
+    //    queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
+    //    queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
+    //    queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
+    //    queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
 
-        std::cout << h.to_fp_string() << std::endl;
-    }catch(cl::Error err){
-        std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
-    }catch(std::exception err){
-        std::cerr << "ERROR: " << err.what() << std::endl;
-    }
+    //    cl::Kernel kernel(program, "cl_main");
+    //    kernel.setArg(0, f_sign_buffer);
+    //    kernel.setArg(1, f_buffer);
+    //    kernel.setArg(2, g_sign_buffer);
+    //    kernel.setArg(3, g_buffer);
+
+    //    cl::Event event;
+    //    queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
+    //    event.wait();
+    //    queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
+    //    queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+    //}catch(cl::Error err){
+    //    std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
+    //}catch(std::exception err){
+    //    std::cerr << "ERROR: " << err.what() << std::endl;
+    //}
+
     return 0;
 }
