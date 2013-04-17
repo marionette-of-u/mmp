@@ -113,10 +113,41 @@ bool check_zero(const raw_data_type *z){
     return true;
 }
 
+u_base2_type s_lshift(u_base2_type x, base_type n){
+    if(n >= BASE2_TYPE_SIZE / 2){ return 0; }
+    return x << n;
+}
+
+u_base2_type s_rshift(u_base2_type x, base_type n){
+    if(n >= BASE2_TYPE_SIZE / 2){ return 0; }
+    return x >> n;
+}
+
+base_type nlz(u_base_type x){
+    u_base_type y;
+    base_type n = BASE2_TYPE_SIZE / 2, c = n / 2;
+    do{
+        y = x >> c;
+        if(y != 0){
+            n -= c;
+            x = y;
+        }
+        c >>= 1;
+    }while(c != 0);
+    return n - (base_type)x;
+}
+
 typedef struct{
     base_type sign;
     raw_data_type data[PREC];
 } fixed_point;
+
+base_type degree(const fixed_point *z){
+    if(z->sign == 0){ return 0; }
+    base_type n = PREC - 1;
+    while(z->data[n] == 0){ --n; }
+    return n + 1;
+}
 
 void copy_from_pre_fixed_point(fixed_point *z, const u_base_type *w){
     if(check_zero(w)){
@@ -290,7 +321,7 @@ void fp_mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
     }
 }
 
-// r := z / w
+// z := v / w
 void div_by_word(fixed_point *z, const fixed_point *v, u_base_type w){
     set_zero(z);
     zero_clear(z->data);
@@ -301,6 +332,63 @@ void div_by_word(fixed_point *z, const fixed_point *v, u_base_type w){
         dividend = (dividend % w) << (BASE2_TYPE_SIZE / 2);
     }
     zero_normalize(z);
+}
+
+// q. := u. / v.
+void fp_div(fixed_point *q, const fixed_point *u, const fixed_point *v){
+    if(u->sign == 0){
+        set_zero(q);
+        return;
+    }
+    q->sign = u->sign * v->sign;
+    const base_type m = degree(u), n = degree(v);
+    const u_base2_type b = (u_base2_type)BASE2_TYPE_MASK + 1;
+    u_base2_type qhat, rhat, p;
+    base2_type i, j, t, k;
+    for(i = 0; i < PREC; ++i){ q->data[i] = 0; }
+    const base_type s = nlz(v->data[n - 1]);
+    u_base_type vn[PREC * 2];
+    for(i = (base2_type)(n - 1); i > 0; --i){
+        vn[i] = (u_base_type)(s_lshift(v->data[i], s) | s_rshift(v->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
+    }
+    vn[0] = (u_base_type)(s_lshift(v->data[0], s));
+    u_base_type un[(PREC + 1) * 2 + PREC];
+    un[m + FRACTION_PART] = (u_base_type)s_rshift(u->data[m - 1], BASE2_TYPE_SIZE / 2 - s);
+    for(i = 0; i < PREC; ++i){ un[i] = 0; }
+    for(i = m - 1; i > 0; --i){
+        un[i + FRACTION_PART] = (u_base_type)(s_lshift(u->data[i], s) | s_rshift(u->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
+    }
+    un[FRACTION_PART] = (u_base_type)(s_lshift(u->data[0], s));
+    for(j = m + FRACTION_PART - n; j >= 0; --j){
+        qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
+        rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
+        do{
+            if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j - n - 2]){
+                --qhat;
+                rhat += vn[n - 1];
+                if(rhat < b){ continue; }
+            }
+        }while(false);
+        k = 0;
+        for(i = 0; i < n; ++i){
+            p = qhat * vn[i];
+            t = un[i + j] - k - (p & BASE2_TYPE_MASK);
+            un[i + j] = (u_base_type)t;
+            k = (p >> BASE2_TYPE_SIZE / 2) - (t >> BASE2_TYPE_SIZE / 2);
+        }
+        t = un[j + n] - k;
+        un[j + n] = (u_base_type)t;
+        q->data[j] = (u_base_type)qhat;
+        if(t < 0){
+            --q->data[j];
+            k = 0;
+            for(i = 0; i < n; ++i){
+                t = un[i + j] + vn[i] + k;
+                un[i + j] = (u_base_type)t;
+            }
+            k = t >> BASE2_TYPE_SIZE / 2;
+        }
+    }
 }
 
 __kernel void cl_main(
@@ -323,11 +411,11 @@ __kernel void cl_main(
         g.data[i] = g_[i];
     }
 
-    sub(&f, &g);
+    fp_div(&h, &f, &g);
 
     // out f
-    *sign_f = f.sign;
+    *sign_f = h.sign;
     for(base_type i = 0; i < PREC; ++i){
-        f_[i] = f.data[i];
+        f_[i] = h.data[i];
     }
 }
