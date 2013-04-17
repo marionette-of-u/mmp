@@ -179,7 +179,7 @@ struct fixed_point{
             return;
         }
         sign = u.sign * v.sign;
-        const int32_t m = u.primitive_degree() + 1, n = v.primitive_degree() + 1;
+        const int32_t m = u.primitive_degree(), n = v.primitive_degree();
         const uint64_t b = static_cast<uint64_t>(BASE2_TYPE_MASK) + 1;
         uint32_t *un, *vn;
         uint64_t qhat, rhat, p;
@@ -200,7 +200,7 @@ struct fixed_point{
         vn[0] = static_cast<uint32_t>(primitive_s_lshift(v.data[0], s));
         std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2]);
         un = un_scoped_guard.get();
-        un[m] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], (BASE2_TYPE_SIZE / 2 - s + 1)));
+        un[m] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], (BASE2_TYPE_SIZE / 2 - s)));
         for(i = m - 1; i > 0; --i){
             un[i] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
         }
@@ -220,7 +220,7 @@ struct fixed_point{
                 p = qhat * vn[i];
                 t = un[i + j] - k - (p & BASE2_TYPE_MASK);
                 un[i + j] = static_cast<uint32_t>(t);
-                k = primitive_s_rshift(p, BASE2_TYPE_SIZE / 2) - primitive_s_rshift(t, BASE2_TYPE_SIZE / 2);
+                k = (p >> BASE2_TYPE_SIZE / 2) - (t >> BASE2_TYPE_SIZE / 2);
             }
             t = un[j + n] - k;
             un[j + n] = static_cast<uint32_t>(t);
@@ -232,7 +232,7 @@ struct fixed_point{
                     t = un[i + j] + vn[i] + k;
                     un[i + j] = static_cast<uint32_t>(t);
                 }
-                k = primitive_s_rshift(t, BASE2_TYPE_SIZE / 2);
+                k = t >> BASE2_TYPE_SIZE / 2;
             }
         }
     }
@@ -353,7 +353,7 @@ private:
         if(sign == 0){ return 0; }
         int32_t n = static_cast<int32_t>(precision - 1);
         while(data[n] == 0){ --n; }
-        return n;
+        return n + 1;
     }
 
     void primitive_add_n(const fixed_point &w){
@@ -486,13 +486,15 @@ private:
 
 int main(){
     fixed_point
-        f(g_integral_part, g_fraction_part, "125", "75"),
-        g(g_integral_part, g_fraction_part, "0", "5"),
+        f(g_integral_part, g_fraction_part, "17", "0"),
+        g(g_integral_part, g_fraction_part, "4", "0"),
         h(g_integral_part, g_fraction_part, 0);
     h.fp_div(f, g);
     std::cout << f.to_string() << std::endl;
     std::cout << g.to_string() << std::endl;
     std::cout << h.to_string() << std::endl;
+
+    return 0;
 
     //cl_int err = CL_SUCCESS;
     //try{
@@ -562,5 +564,5 @@ int main(){
     //    std::cerr << "ERROR: " << err.what() << std::endl;
     //}
 
-    return 0;
+    //return 0;
 }
