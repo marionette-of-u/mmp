@@ -64,7 +64,6 @@ struct fixed_point{
     {
         for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
         {
-            // interpret integral part.
             std::size_t n = static_cast<std::size_t>(std::ceil(LOG_2_10 * str_i.size() / (BASE2_TYPE_SIZE / 2)));
             if(n > integral_part){ throw(fixed_point_exception("input value is too large.")); }
             fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
@@ -79,7 +78,6 @@ struct fixed_point{
             primitive_add_n(z);
         }
         {
-            // interpret fraction part.
             fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
             for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
             digit.data[fraction_part] = 0;
@@ -184,13 +182,7 @@ struct fixed_point{
         uint32_t *un, *vn;
         uint64_t qhat, rhat, p;
         int64_t i, j, t, k;
-        if(n == 1){
-            k = 0;
-            for(j = m - 1; j >= 0; --j){
-                data[j] = static_cast<uint32_t>((k * b + u.data[j]) / v.data[0]);
-                k = (k * b + u.data[j]) - data[j] * v.data[0];
-            }
-        }
+        for(i = 0; i < static_cast<int64_t>(precision); ++i){ data[i] = 0; }
         const uint32_t s = primitive_nlz(v.data[n - 1]);
         std::unique_ptr<uint32_t[]> vn_scoped_guard(new uint32_t[precision * 2]);
         vn = vn_scoped_guard.get();
@@ -198,14 +190,15 @@ struct fixed_point{
             vn[i] = static_cast<uint32_t>(primitive_s_lshift(v.data[i], s) | primitive_s_rshift(v.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
         }
         vn[0] = static_cast<uint32_t>(primitive_s_lshift(v.data[0], s));
-        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2]);
+        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2 + precision]);
         un = un_scoped_guard.get();
-        un[m] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], (BASE2_TYPE_SIZE / 2 - s)));
+        un[m + fraction_part] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], (BASE2_TYPE_SIZE / 2 - s)));
+        for(i = 0; i < static_cast<int64_t>(fraction_part); ++i){ un[i] = 0; }
         for(i = m - 1; i > 0; --i){
-            un[i] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
+            un[i + fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
         }
-        un[0] = static_cast<uint32_t>(primitive_s_lshift(u.data[0], s));
-        for(j = m - n; j >= 0; --j){
+        un[fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[0], s));
+        for(j = m + fraction_part - n; j >= 0; --j){
             qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
             rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
             do{
@@ -486,13 +479,15 @@ private:
 
 int main(){
     fixed_point
-        f(g_integral_part, g_fraction_part, "17", "0"),
-        g(g_integral_part, g_fraction_part, "4", "0"),
+        f(g_integral_part, g_fraction_part, "1", "25"),
+        g(g_integral_part, g_fraction_part, "10", "0"),
         h(g_integral_part, g_fraction_part, 0);
+
     h.fp_div(f, g);
-    std::cout << f.to_string() << std::endl;
-    std::cout << g.to_string() << std::endl;
-    std::cout << h.to_string() << std::endl;
+
+    std::cout << f.to_fp_string() << std::endl; // "1.25"
+    std::cout << g.to_fp_string() << std::endl; // "10.0"
+    std::cout << h.to_fp_string() << std::endl; // "0.125"
 
     return 0;
 
