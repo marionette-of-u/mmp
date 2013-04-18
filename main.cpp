@@ -96,22 +96,29 @@ struct fixed_point{
         delete[] data;
     }
 
-    std::string to_string() const{
+    std::string to_string(uint32_t radix = 10) const{
         if(sign == 0){ return "0"; }
         std::string result;
         fixed_point temp(integral_part, fraction_part, 0);
         temp.sign = sign;
         for(std::size_t i = 0; i < precision; ++i){ temp.data[i] = data[i]; }
         for(std::size_t i = 0; !temp.primitive_check_zero(); ++i){
-            result.push_back(static_cast<char>(temp.primitive_mod_by_single(10) + '0'));
-            temp.primitive_div_by_single(10);
+            uint32_t n = temp.primitive_mod_by_single(radix);
+            char c = 0;
+            if(n >= 0 && n <= 9){
+                c = static_cast<char>(n + '0');
+            }else{
+                c = static_cast<char>(n - 10 + 'A');
+            }
+            result.push_back(c);
+            temp.primitive_div_by_single(radix);
         }
         if(sign < 0){ result.push_back('-'); }
         std::reverse(result.begin(), result.end());
         return result;
     }
 
-    std::string to_fp_string() const{
+    std::string to_fp_string(uint32_t radix = 10) const{
         if(sign == 0){ return "0"; }
         std::string result;
         if(sign < 0){
@@ -126,7 +133,7 @@ struct fixed_point{
             if(integer.primitive_check_zero()){
                 result += "0";
             }else{
-                result += integer.to_string();
+                result += integer.to_string(radix);
             }
         }
         fixed_point temp(integral_part, fraction_part, 0);
@@ -137,8 +144,13 @@ struct fixed_point{
             str_f = "0";
         }else{
             while(!temp.primitive_check_zero()){
-                temp.primitive_mul_by_single(10);
-                str_f.push_back(static_cast<char>(temp.data[fraction_part] + '0'));
+                temp.primitive_mul_by_single(radix);
+                uint32_t n = temp.data[fraction_part];
+                if(n >= 0 && n <= 9){
+                    str_f.push_back(static_cast<char>(n + '0'));
+                }else{
+                    str_f.push_back(static_cast<char>(n - 10 + 'A'));
+                }
                 temp.data[fraction_part] = 0;
             }
         }
@@ -511,11 +523,11 @@ int main(){
         cl::Program::Sources sources;
         sources.push_back(std::make_pair(&cl_source[0], cl_source.size()));
         cl::Program program(context, sources);
-        program.build(devices);
+        program.build(devices, "-cl-strict-aliasing");
 
         fixed_point
-            f(g_integral_part, g_fraction_part, "1", "25"),
-            g(g_integral_part, g_fraction_part, "4", "25");
+            f(g_integral_part, g_fraction_part, "1", "0"),
+            g(g_integral_part, g_fraction_part, "3", "0");
         std::cout << f.to_fp_string() << std::endl;
         std::cout << g.to_fp_string() << std::endl;
 
@@ -536,12 +548,12 @@ int main(){
         kernel.setArg(3, g_buffer);
 
         cl::Event event;
-        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NDRange(1, 1), nullptr, &event);
+        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NullRange, nullptr, &event);
         event.wait();
         queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
         queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
 
-        std::cout << f.to_fp_string() << std::endl;
+        std::cout << f.to_fp_string(0x10) << std::endl;
     }catch(cl::Error err){
         std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
     }catch(std::exception err){
