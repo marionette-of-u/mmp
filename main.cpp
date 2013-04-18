@@ -34,11 +34,15 @@ public:
     }
 };
 
-struct fixed_point{
-    const std::size_t integral_part, fraction_part, precision;
+class fixed_point{
+private:
+    std::size_t integral_part, fraction_part, precision;
+
+public:
     int32_t sign;
     uint32_t *data;
 
+public:
     fixed_point(std::size_t integral_part_, std::size_t fraction_part_, int n) :
         integral_part(integral_part_),
         fraction_part(fraction_part_),
@@ -157,6 +161,51 @@ struct fixed_point{
         result.push_back('.');
         result += str_f;
         return result;
+    }
+
+    void set(const fixed_point &w){
+        primitive_set_fixed_point(w);
+    }
+
+    void resize(std::size_t i_part, std::size_t f_part){
+        uint32_t *new_data = new uint32_t[i_part + f_part];
+        if(f_part > fraction_part){
+            for(std::size_t i = 0; i < fraction_part; ++i){
+                new_data[f_part - fraction_part + i] = data[i];
+            }
+            for(std::size_t i = 0; i < f_part - fraction_part; ++i){
+                new_data[i] = 0;
+            }
+        }else if(f_part < fraction_part){
+            for(std::size_t i = 0; i < f_part; ++i){
+                new_data[i] = data[fraction_part - f_part + i];
+            }
+        }else{
+            for(std::size_t i = 0; i < fraction_part; ++i){
+                new_data[i] = data[i];
+            }
+        }
+        if(i_part > integral_part){
+            for(std::size_t i = 0; i < integral_part; ++i){
+                new_data[f_part + i] = data[fraction_part + i];
+            }
+            for(std::size_t i = 0; i < i_part - integral_part; ++i){
+                new_data[f_part + integral_part + i] = 0;
+            }
+        }else if(i_part < integral_part){
+            for(std::size_t i = 0; i < i_part; ++i){
+                new_data[f_part + i] = data[fraction_part + i];
+            }
+        }else{
+            for(std::size_t i = 0; i < integral_part; ++i){
+                new_data[f_part + i] = data[fraction_part + i];
+            }
+        }
+        fraction_part = f_part;
+        integral_part = i_part;
+        precision = fraction_part + integral_part;
+        delete[] data;
+        data = new_data;
     }
 
     void mul(const fixed_point &v, const fixed_point &w){
@@ -490,75 +539,93 @@ private:
 };
 
 int main(){
-    cl_int err = CL_SUCCESS;
-    try{
-        std::ifstream ifile("cl/cl.cl", std::ios::binary | std::ios::ate);
-        std::vector<char> cl_source;
-        if(ifile.fail()){
-            throw(std::exception("can not open the file \"cl/cl.cl\"."));
-        }
-        cl_source.resize((std::size_t)ifile.tellg());
-        ifile.seekg(0, ifile.beg);
-        ifile.read(&cl_source[0], cl_source.size());
+    fixed_point
+        f(g_integral_part, g_fraction_part * 2, "1", "0"),
+        g(g_integral_part, g_fraction_part * 2, "3", "0"),
+        h(g_integral_part, g_fraction_part * 2, 0);
+    std::cout << f.to_fp_string() << std::endl;
+    std::cout << g.to_fp_string() << std::endl;
 
-        std::vector<cl::Platform> platforms;
-        cl::Platform::get(&platforms);
-        if(platforms.size() == 0){
-            std::cerr << "Platform size 0" << std::endl;
-            return -1;
-        }
+    // 0.333... = 0.5555555555555555555555555555555555555555555555555555555555555555
+    h.div(f, g);
+    std::cout << h.to_fp_string(0x10) << std::endl;
 
-        cl::Platform platform = platforms[0];
-        cl_context_properties properties[] = {
-            CL_CONTEXT_PLATFORM,
-            reinterpret_cast<cl_context_properties>(platform()),
-            0
-        };
-        cl::Context context(CL_DEVICE_TYPE_GPU, properties);
-
-        std::vector<cl::Device> devices = context.getInfo<CL_CONTEXT_DEVICES>();
-        cl::Device device = devices[0];
-        cl::CommandQueue queue(context, device);
-
-        cl::Program::Sources sources;
-        sources.push_back(std::make_pair(&cl_source[0], cl_source.size()));
-        cl::Program program(context, sources);
-        program.build(devices, "-cl-strict-aliasing");
-
-        fixed_point
-            f(g_integral_part, g_fraction_part, "1", "0"),
-            g(g_integral_part, g_fraction_part, "3", "0");
-        std::cout << f.to_fp_string() << std::endl;
-        std::cout << g.to_fp_string() << std::endl;
-
-        cl::Buffer
-            f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
-            f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
-            g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
-            g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
-        queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
-        queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
-        queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
-        queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
-
-        cl::Kernel kernel(program, "cl_main");
-        kernel.setArg(0, f_sign_buffer);
-        kernel.setArg(1, f_buffer);
-        kernel.setArg(2, g_sign_buffer);
-        kernel.setArg(3, g_buffer);
-
-        cl::Event event;
-        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NullRange, nullptr, &event);
-        event.wait();
-        queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
-        queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
-
-        std::cout << f.to_fp_string(0x10) << std::endl;
-    }catch(cl::Error err){
-        std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
-    }catch(std::exception err){
-        std::cerr << "ERROR: " << err.what() << std::endl;
-    }
+    // 0.999... = 0.FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+    f.set(h);
+    h.mul(f, g);
+    std::cout << h.to_fp_string(0x10) << std::endl;
 
     return 0;
+
+    //cl_int err = CL_SUCCESS;
+    //try{
+    //    std::ifstream ifile("cl/cl.cl", std::ios::binary | std::ios::ate);
+    //    std::vector<char> cl_source;
+    //    if(ifile.fail()){
+    //        throw(std::exception("can not open the file \"cl/cl.cl\"."));
+    //    }
+    //    cl_source.resize((std::size_t)ifile.tellg());
+    //    ifile.seekg(0, ifile.beg);
+    //    ifile.read(&cl_source[0], cl_source.size());
+
+    //    std::vector<cl::Platform> platforms;
+    //    cl::Platform::get(&platforms);
+    //    if(platforms.size() == 0){
+    //        std::cerr << "Platform size 0" << std::endl;
+    //        return -1;
+    //    }
+
+    //    cl::Platform platform = platforms[0];
+    //    cl_context_properties properties[] = {
+    //        CL_CONTEXT_PLATFORM,
+    //        reinterpret_cast<cl_context_properties>(platform()),
+    //        0
+    //    };
+    //    cl::Context context(CL_DEVICE_TYPE_GPU, properties);
+
+    //    std::vector<cl::Device> devices = context.getInfo<CL_CONTEXT_DEVICES>();
+    //    cl::Device device = devices[0];
+    //    cl::CommandQueue queue(context, device);
+
+    //    cl::Program::Sources sources;
+    //    sources.push_back(std::make_pair(&cl_source[0], cl_source.size()));
+    //    cl::Program program(context, sources);
+    //    program.build(devices, "-cl-strict-aliasing");
+
+    //    fixed_point
+    //        f(g_integral_part, g_fraction_part, "1", "0"),
+    //        g(g_integral_part, g_fraction_part, "3", "0");
+    //    std::cout << f.to_fp_string() << std::endl;
+    //    std::cout << g.to_fp_string() << std::endl;
+
+    //    cl::Buffer
+    //        f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
+    //        f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
+    //        g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
+    //        g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
+    //    queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
+    //    queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
+    //    queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
+    //    queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
+
+    //    cl::Kernel kernel(program, "cl_main");
+    //    kernel.setArg(0, f_sign_buffer);
+    //    kernel.setArg(1, f_buffer);
+    //    kernel.setArg(2, g_sign_buffer);
+    //    kernel.setArg(3, g_buffer);
+
+    //    cl::Event event;
+    //    queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NullRange, nullptr, &event);
+    //    event.wait();
+    //    queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
+    //    queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
+
+    //    std::cout << f.to_fp_string(0x10) << std::endl;
+    //}catch(cl::Error err){
+    //    std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
+    //}catch(std::exception err){
+    //    std::cerr << "ERROR: " << err.what() << std::endl;
+    //}
+
+    //return 0;
 }
