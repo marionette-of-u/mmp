@@ -297,7 +297,7 @@ u_base_type mul_pow2(fixed_point *z, base_type w){
 }
 
 // z. := v. * w.
-void fp_mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
+void mul(fixed_point *z, const fixed_point *v, const fixed_point *w){
     if(v->sign == 0 || w->sign == 0){
         z->sign = 0;
         return;
@@ -335,7 +335,7 @@ void div_by_word(fixed_point *z, const fixed_point *v, u_base_type w){
 }
 
 // q. := u. / v.
-void fp_div(fixed_point *q, const fixed_point *u, const fixed_point *v){
+void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
     if(u->sign == 0){
         set_zero(q);
         return;
@@ -411,7 +411,7 @@ __kernel void cl_main(
         g.data[i] = g_[i];
     }
 
-    fp_div(&h, &f, &g);
+    div(&h, &f, &g);
 
     // out f
     *sign_f = h.sign;

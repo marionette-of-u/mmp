@@ -147,7 +147,7 @@ struct fixed_point{
         return result;
     }
 
-    void fp_mul(const fixed_point &v, const fixed_point &w){
+    void mul(const fixed_point &v, const fixed_point &w){
         if(v.sign == 0 || w.sign == 0){
             sign = 0;
             return;
@@ -171,7 +171,7 @@ struct fixed_point{
         }
     }
 
-    void fp_div(const fixed_point &u, const fixed_point &v){
+    void div(const fixed_point &u, const fixed_point &v){
         if(u.sign == 0){
             primitive_set_zero();
             return;
@@ -515,7 +515,7 @@ int main(){
 
         fixed_point
             f(g_integral_part, g_fraction_part, "1", "25"),
-            g(g_integral_part, g_fraction_part, "10", "0");
+            g(g_integral_part, g_fraction_part, "4", "25");
         std::cout << f.to_fp_string() << std::endl;
         std::cout << g.to_fp_string() << std::endl;
 
