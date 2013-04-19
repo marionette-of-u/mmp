@@ -1,4 +1,3 @@
-// PREC = 1[integral part] + n[fraction part]
 #define INTEGER_PART 1
 #define FRACTION_PART 4
 

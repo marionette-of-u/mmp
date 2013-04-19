@@ -16,8 +16,6 @@ std::size_t g_integral_part = 1, g_fraction_part = 4, g_prec = g_integral_part +
 #define BASE2_TYPE_SIZE 64
 #define BASE2_TYPE_MASK 0x00000000FFFFFFFFUL
 
-#define LOG_2_10 3.3219280948873623478703194294894
-
 class fixed_point_exception : public std::exception{
 private:
     const char *error_str;
@@ -53,10 +51,7 @@ public:
         precision(m_precision),
         sign(n > 0 ? 1 : n < 0 ? -1 : 0),
         data(new uint32_t[precision])
-    {
-        for(size_t i = 0; i < precision; ++i){ data[i] = 0; }
-        data[fraction_part] = static_cast<uint32_t>(n < 0 ? -n : n);
-    }
+    { set(n); }
 
     fixed_point(
         std::size_t integral_part_,
@@ -73,36 +68,7 @@ public:
         precision(m_precision),
         sign(1),
         data(new uint32_t[precision])
-    {
-        for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
-        {
-            std::size_t n = static_cast<std::size_t>(std::ceil((std::log(static_cast<double>(radix)) / std::log(2.0)) * str_i.size() / (BASE2_TYPE_SIZE / 2)));
-            if(n > integral_part){ throw(fixed_point_exception("input value is too large.")); }
-            fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
-            for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
-            char temp[] = { 0, '\0' };
-            for(std::size_t i = 0; i < str_i.size(); ++i){
-                z.primitive_mul_by_single(radix);
-                temp[0] = str_i[i];
-                digit.data[fraction_part] = std::strtol(temp, nullptr, radix);
-                z.primitive_add_n(digit);
-            }
-            primitive_add_n(z);
-        }
-        {
-            fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
-            for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
-            digit.data[fraction_part] = 0;
-            char temp[] = { 0, '\0' };
-            for(int i = static_cast<int>(str_f.size() - 1); i >= 0; --i){
-                temp[0] = str_f[i];
-                digit.data[fraction_part] = std::strtol(temp, nullptr, radix);
-                z.primitive_add_n(digit);
-                z.primitive_div_by_single(radix);
-            }
-            primitive_add_n(z);
-        }
-    }
+    { set(str_i, str_f, radix); }
 
     ~fixed_point(){
         delete[] data;
@@ -169,6 +135,44 @@ public:
         result.push_back('.');
         result += str_f;
         return result;
+    }
+
+    void set(int n){
+        sign = n > 0 ? 1 : n < 0 ? -1 : 0;
+        for(size_t i = 0; i < precision; ++i){ data[i] = 0; }
+        data[fraction_part] = static_cast<uint32_t>(n < 0 ? -n : n);
+    }
+
+    void set(const std::string &str_i, const std::string str_f, uint32_t radix = 10){
+        sign = 1;
+        for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
+        {
+            std::size_t n = static_cast<std::size_t>(std::ceil((std::log(static_cast<double>(radix)) / std::log(2.0)) * str_i.size() / (BASE2_TYPE_SIZE / 2)));
+            if(n > integral_part){ throw(fixed_point_exception("input value is too large.")); }
+            fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
+            for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
+            char temp[] = { 0, '\0' };
+            for(std::size_t i = 0; i < str_i.size(); ++i){
+                z.primitive_mul_by_single(radix);
+                temp[0] = str_i[i];
+                digit.data[fraction_part] = std::strtol(temp, nullptr, radix);
+                z.primitive_add_n(digit);
+            }
+            primitive_add_n(z);
+        }
+        {
+            fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
+            for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
+            digit.data[fraction_part] = 0;
+            char temp[] = { 0, '\0' };
+            for(int i = static_cast<int>(str_f.size() - 1); i >= 0; --i){
+                temp[0] = str_f[i];
+                digit.data[fraction_part] = std::strtol(temp, nullptr, radix);
+                z.primitive_add_n(digit);
+                z.primitive_div_by_single(radix);
+            }
+            primitive_add_n(z);
+        }
     }
 
     void set(const fixed_point &w){
@@ -256,15 +260,15 @@ public:
         std::unique_ptr<uint32_t[]> vn_scoped_guard(new uint32_t[precision * 2]);
         vn = vn_scoped_guard.get();
         for(i = n - 1; i > 0; --i){
-            vn[i] = static_cast<uint32_t>(primitive_s_lshift(v.data[i], s) | primitive_s_rshift(v.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
+            vn[i] = static_cast<uint32_t>(primitive_s_lshift(v.data[i], s) | primitive_s_rshift(v.data[i - 1], BASE2_TYPE_SIZE / 2 - s));
         }
         vn[0] = static_cast<uint32_t>(primitive_s_lshift(v.data[0], s));
         std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2 + precision]);
         un = un_scoped_guard.get();
-        un[m + fraction_part] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], (BASE2_TYPE_SIZE / 2 - s)));
+        un[m + fraction_part] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], BASE2_TYPE_SIZE / 2 - s));
         for(i = 0; i < static_cast<int64_t>(fraction_part); ++i){ un[i] = 0; }
         for(i = m - 1; i > 0; --i){
-            un[i + fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], (BASE2_TYPE_SIZE / 2 - s)));
+            un[i + fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], BASE2_TYPE_SIZE / 2 - s));
         }
         un[fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[0], s));
         for(j = m + fraction_part - n; j >= 0; --j){
@@ -605,7 +609,7 @@ int main(){
         kernel.setArg(3, g_buffer);
 
         cl::Event event;
-        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(512 * 4, 512 * 4), cl::NullRange, nullptr, &event);
+        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NullRange, nullptr, &event);
         event.wait();
         queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
         queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
