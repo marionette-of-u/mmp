@@ -62,7 +62,8 @@ public:
         std::size_t integral_part_,
         std::size_t fraction_part_,
         const std::string &str_i,
-        const std::string &str_f
+        const std::string &str_f,
+        uint32_t radix = 10
     ) :
         m_integral_part(integral_part_),
         m_fraction_part(fraction_part_),
@@ -75,15 +76,15 @@ public:
     {
         for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
         {
-            std::size_t n = static_cast<std::size_t>(std::ceil(LOG_2_10 * str_i.size() / (BASE2_TYPE_SIZE / 2)));
+            std::size_t n = static_cast<std::size_t>(std::ceil((std::log(static_cast<double>(radix)) / std::log(2.0)) * str_i.size() / (BASE2_TYPE_SIZE / 2)));
             if(n > integral_part){ throw(fixed_point_exception("input value is too large.")); }
             fixed_point digit(integral_part, fraction_part, 1), z(integral_part, fraction_part, 1);
             for(size_t i = 0; i < precision; ++i){ z.data[i] = 0; }
             char temp[] = { 0, '\0' };
             for(std::size_t i = 0; i < str_i.size(); ++i){
-                z.primitive_mul_by_single(10);
+                z.primitive_mul_by_single(radix);
                 temp[0] = str_i[i];
-                digit.data[fraction_part] = std::strtol(temp, nullptr, 10);
+                digit.data[fraction_part] = std::strtol(temp, nullptr, radix);
                 z.primitive_add_n(digit);
             }
             primitive_add_n(z);
@@ -95,9 +96,9 @@ public:
             char temp[] = { 0, '\0' };
             for(int i = static_cast<int>(str_f.size() - 1); i >= 0; --i){
                 temp[0] = str_f[i];
-                digit.data[fraction_part] = std::strtol(temp, nullptr, 10);
+                digit.data[fraction_part] = std::strtol(temp, nullptr, radix);
                 z.primitive_add_n(digit);
-                z.primitive_div_by_single(10);
+                z.primitive_div_by_single(radix);
             }
             primitive_add_n(z);
         }
@@ -582,8 +583,8 @@ int main(){
         program.build(devices, "-cl-strict-aliasing");
 
         fixed_point
-            f(g_integral_part, g_fraction_part, "1", "0"),
-            g(g_integral_part, g_fraction_part, "3", "0");
+            f(g_integral_part, g_fraction_part, "1000", "0", 0x10),
+            g(g_integral_part, g_fraction_part, "10", "0", 0x10);
         std::cout << f.to_fp_string() << std::endl;
         std::cout << g.to_fp_string() << std::endl;
 
