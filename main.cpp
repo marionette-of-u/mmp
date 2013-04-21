@@ -3,7 +3,10 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <map>
+#include <list>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <exception>
 #include <cmath>
@@ -49,7 +52,7 @@ public:
         integral_part(m_integral_part),
         fraction_part(m_fraction_part),
         precision(m_precision),
-        sign(n > 0 ? 1 : n < 0 ? -1 : 0),
+        sign(0),
         data(new uint32_t[precision])
     { set(n); }
 
@@ -66,7 +69,7 @@ public:
         integral_part(m_integral_part),
         fraction_part(m_fraction_part),
         precision(m_precision),
-        sign(1),
+        sign(0),
         data(new uint32_t[precision])
     { set(str_i, str_f, radix); }
 
@@ -179,7 +182,7 @@ public:
         primitive_set_fixed_point(w);
     }
 
-    void resize(std::size_t i_part, std::size_t f_part){
+    void set_prec(std::size_t i_part, std::size_t f_part){
         uint32_t *new_data = new uint32_t[i_part + f_part];
         if(f_part > fraction_part){
             for(std::size_t i = 0; i < fraction_part; ++i){
@@ -550,71 +553,186 @@ private:
     }
 };
 
-int main(){
-    cl_int err = CL_SUCCESS;
-    try{
-        std::ifstream ifile("cl/cl.cl", std::ios::binary | std::ios::ate);
-        std::vector<char> cl_source;
-        if(ifile.fail()){
-            throw(std::exception("can not open the file \"cl/cl.cl\"."));
-        }
-        cl_source.resize((std::size_t)ifile.tellg());
-        ifile.seekg(0, ifile.beg);
-        ifile.read(&cl_source[0], cl_source.size());
+class mmp{
+    friend class kernel_functor;
 
+private:
+    struct kernel_functor_parameter{
+        cl::Program *program;
+        std::string fn_name;
+        cl::Context *context;
+        cl::CommandQueue *queue;
+    };
+
+public:
+    class kernel_functor{
+    public:
+        struct mem_flag{
+            enum{
+                rw = CL_MEM_READ_WRITE,
+                w = CL_MEM_WRITE_ONLY,
+                r = CL_MEM_READ_ONLY,
+                use_host_ptr = CL_MEM_USE_HOST_PTR,
+                alloc_host_ptr = CL_MEM_ALLOC_HOST_PTR,
+                copy_host_ptr = CL_MEM_COPY_HOST_PTR
+            };
+        };
+
+        kernel_functor(kernel_functor_parameter param) :
+            buffer_list(),
+            kernel_instance(*param.program, param.fn_name.c_str()),
+            event(nullptr),
+            context_ptr(param.context),
+            queue_ptr(param.queue)
+        {}
+
+        void clear(){
+            buffer_list.clear();
+            event.reset(nullptr);
+            context_ptr = nullptr;
+            queue_ptr = nullptr;
+        }
+
+        template<class T>
+        void set_arg(cl_uint idx, cl_mem_flags flags, std::size_t data_size, T *data){
+            cl::Buffer *buffer = new cl::Buffer(*context_ptr, flags, sizeof(T) * data_size, static_cast<void*>(data));
+            buffer_list[idx].reset(buffer);
+            queue_ptr->enqueueWriteBuffer(*buffer, CL_TRUE, 0, data_size, data);
+            kernel_instance.setArg(idx, *buffer);
+        }
+
+        void launch(const cl::NDRange &global, const cl::NDRange &local){
+            event.reset(new cl::Event);
+            queue_ptr->enqueueNDRangeKernel(kernel_instance, cl::NullRange, global, local, nullptr, event.get());
+            event->wait();
+        }
+
+        template<class T>
+        void read(cl_uint idx, std::size_t data_size, T *data){
+            queue_ptr->enqueueReadBuffer(*(buffer_list[idx]), CL_TRUE, 0, sizeof(T) * data_size, data, nullptr);
+        }
+
+    private:
+        std::map<cl_uint, std::unique_ptr<cl::Buffer>> buffer_list;
+        cl::Kernel kernel_instance;
+        std::unique_ptr<cl::Event> event;
+        cl::Context *context_ptr;
+        cl::CommandQueue *queue_ptr;
+
+        kernel_functor(){}
+    };
+
+    mmp(std::size_t i_part, std::size_t f_part, std::string mmp_kernel_filepath, std::string mmp_filepath_ = "cl/mmp.cl") :
+        mmp_filepath(mmp_filepath_),
+        integral_part(i_part),
+        fraction_part(f_part),
+        platform(),
+        context(nullptr),
+        devices(nullptr),
+        queue(nullptr),
+        sources(nullptr),
+        program(nullptr)
+    {
         std::vector<cl::Platform> platforms;
         cl::Platform::get(&platforms);
         if(platforms.size() == 0){
-            std::cerr << "Platform size 0" << std::endl;
-            return -1;
+            throw(std::exception("platform size 0."));
         }
-
-        cl::Platform platform = platforms[0];
+        platform = platforms[0];
         cl_context_properties properties[] = {
             CL_CONTEXT_PLATFORM,
             reinterpret_cast<cl_context_properties>(platform()),
             0
         };
-        cl::Context context(CL_DEVICE_TYPE_GPU, properties);
+        context.reset(new cl::Context(CL_DEVICE_TYPE_GPU, properties));
+        devices.reset(new std::vector<cl::Device>);
+        *devices = context->getInfo<CL_CONTEXT_DEVICES>();
+        queue.reset(new cl::CommandQueue(*context, (*devices)[0]));
+        rebuild(integral_part, fraction_part, mmp_kernel_filepath);
+    }
 
-        std::vector<cl::Device> devices = context.getInfo<CL_CONTEXT_DEVICES>();
-        cl::Device device = devices[0];
-        cl::CommandQueue queue(context, device);
+    kernel_functor_parameter create_functor(const std::string &fn_name){
+        kernel_functor_parameter param;
+        param.program = program.get();
+        param.fn_name = fn_name;
+        param.context = context.get();
+        param.queue = queue.get();
+        return param;
+    }
 
-        cl::Program::Sources sources;
-        sources.push_back(std::make_pair(&cl_source[0], cl_source.size()));
-        cl::Program program(context, sources);
-        program.build(devices, "-cl-strict-aliasing");
+    void rebuild(std::size_t i_part, std::size_t f_part, const std::string &mmp_kernel_filepath){
+        raw_sources.clear();
+        sources.reset(new cl::Program::Sources);
+        std::stringstream ss;
+        ss << "#define INTEGER_PART " << i_part << "\n";
+        ss << "#define FRACTION_PART " << f_part << "\n";
+        std::string i_f_part = ss.str();
+        raw_sources.insert(raw_sources.begin(), i_f_part.begin(), i_f_part.end());
+        push_back_source(mmp_filepath);
+        push_back_source(mmp_kernel_filepath);
+        sources->push_back(std::make_pair(&raw_sources[0], raw_sources.size()));
+        program.reset(new cl::Program(*context, *sources));
+        program->build(*devices, "-cl-strict-aliasing");
+    }
 
+private:
+    void push_back_source(const std::string &filepath){
+        std::vector<char> cl_source;
+        std::ifstream ifile(filepath.c_str(), std::ios::binary | std::ios::ate);
+        if(ifile.fail()){ throw(std::exception("can not open cl file.")); }
+        cl_source.resize(static_cast<std::size_t>(ifile.tellg()));
+        ifile.seekg(0, ifile.beg);
+        ifile.read(&cl_source[0], cl_source.size());
+        raw_sources.insert(raw_sources.end(), cl_source.begin(), cl_source.end());
+    }
+
+    const std::string mmp_filepath;
+    std::size_t integral_part, fraction_part;
+    cl::Platform platform;
+    std::vector<char> raw_sources;
+    std::unique_ptr<cl::Context> context;
+    std::unique_ptr<std::vector<cl::Device>> devices;
+    std::unique_ptr<cl::CommandQueue> queue;
+    std::unique_ptr<cl::Program::Sources> sources;
+    std::unique_ptr<cl::Program> program;
+};
+
+int main(){
+    try{
         fixed_point
-            f(g_integral_part, g_fraction_part, "1000", "0", 0x10),
-            g(g_integral_part, g_fraction_part, "10", "0", 0x10);
+            f(g_integral_part, g_fraction_part, "1", "0"),
+            g(g_integral_part, g_fraction_part, "3", "0");
         std::cout << f.to_fp_string() << std::endl;
         std::cout << g.to_fp_string() << std::endl;
+        mmp mmp_manager_test(1, 4, "cl/test.cl");
+        {
+            mmp::kernel_functor functor(mmp_manager_test.create_functor("test"));
+            functor.set_arg(0, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, 1, &f.sign);
+            functor.set_arg(1, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, f.precision, f.data);
+            functor.set_arg(2, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, 1, &g.sign);
+            functor.set_arg(3, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, g.precision, g.data);
+            functor.launch(cl::NDRange(1), cl::NullRange);
+            functor.read(0, 1, &f.sign);
+            functor.read(1, f.precision, f.data);
+            std::cout << f.to_fp_string(0x10) << std::endl;
+        }
 
-        cl::Buffer
-            f_sign_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &f.sign),
-            f_buffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * f.precision, f.data),
-            g_sign_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(int32_t), &g.sign),
-            g_buffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(uint32_t) * g.precision, g.data);
-        queue.enqueueWriteBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign);
-        queue.enqueueWriteBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data);
-        queue.enqueueWriteBuffer(g_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &g.sign);
-        queue.enqueueWriteBuffer(g_buffer, CL_TRUE, 0, sizeof(uint32_t) * g.precision, g.data);
-
-        cl::Kernel kernel(program, "cl_main");
-        kernel.setArg(0, f_sign_buffer);
-        kernel.setArg(1, f_buffer);
-        kernel.setArg(2, g_sign_buffer);
-        kernel.setArg(3, g_buffer);
-
-        cl::Event event;
-        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(1), cl::NullRange, nullptr, &event);
-        event.wait();
-        queue.enqueueReadBuffer(f_sign_buffer, CL_TRUE, 0, sizeof(int32_t), &f.sign, nullptr, &event);
-        queue.enqueueReadBuffer(f_buffer, CL_TRUE, 0, sizeof(uint32_t) * f.precision, f.data, nullptr, &event);
-
-        std::cout << f.to_fp_string(0x10) << std::endl;
+        mmp_manager_test.rebuild(1, 8, "cl/test.cl");
+        f.set_prec(1, 8);
+        f.set("1", "0");
+        g.set_prec(1, 8);
+        g.set("3", "0");
+        {
+            mmp::kernel_functor functor(mmp_manager_test.create_functor("test"));
+            functor.set_arg(0, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, 1, &f.sign);
+            functor.set_arg(1, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, f.precision, f.data);
+            functor.set_arg(2, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, 1, &g.sign);
+            functor.set_arg(3, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, g.precision, g.data);
+            functor.launch(cl::NDRange(1), cl::NullRange);
+            functor.read(0, 1, &f.sign);
+            functor.read(1, f.precision, f.data);
+            std::cout << f.to_fp_string(0x10) << std::endl;
+        }
     }catch(cl::Error err){
         std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
     }catch(std::exception err){
