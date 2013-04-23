@@ -1,3 +1,6 @@
+#ifndef MMP_HPP_
+#define MMP_HPP_
+
 #include <algorithm>
 #include <memory>
 #include <iostream>
@@ -724,3 +727,4 @@ private:
 
 typedef x_mmp<> mmp;
 
+#endif // MMP_HPP_
