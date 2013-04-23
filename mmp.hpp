@@ -654,7 +654,7 @@ public:
         kernel_functor(){}
     };
 
-    x_mmp(std::size_t i_part, std::size_t f_part, std::string mmp_kernel_filepath, std::string mmp_filepath_ = "cl/x_mmp.cl") :
+    x_mmp(std::size_t i_part, std::size_t f_part, std::string mmp_kernel_filepath, std::string mmp_filepath_ = "cl/mmp.cl") :
         mmp_filepath(mmp_filepath_),
         integral_part(i_part),
         fraction_part(f_part),
