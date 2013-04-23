@@ -171,7 +171,7 @@ public:
         data[fraction_part] = static_cast<uint32_t>(n < 0 ? -n : n);
     }
 
-    void set(const std::string &str_i, const std::string str_f, uint32_t radix = 10){
+    void set(const std::string &str_i, const std::string &str_f, uint32_t radix = 10){
         sign = 1;
         for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
         {
@@ -341,7 +341,7 @@ public:
             primitive_add_n(w);
             return;
         }
-        int u = primitive_compare(*this, w);
+        int u = compare(*this, w);
         if(u != 0){
             if(u > 0){
                 primitive_sub_n(w);
@@ -368,7 +368,7 @@ public:
             primitive_add_n(w);
             return;
         }
-        int u = primitive_compare(*this, w);
+        int u = compare(*this, w);
         if(u != 0){
             if(u > 0){
                 primitive_sub_n(w);
@@ -383,6 +383,10 @@ public:
         }else{
             primitive_set_zero();
         }
+    }
+
+    static int compare(const fixed_point &x, const fixed_point &y){
+        return primitive_compare(x, y);
     }
 
 private:
@@ -536,7 +540,7 @@ private:
         for(std::size_t i = 0; i < precision; ++i){ data[i] = w.data[i]; }
     }
 
-    int primitive_compare(const x_fixed_point &z, const x_fixed_point &w){
+    static int primitive_compare(const x_fixed_point &z, const x_fixed_point &w){
         for(int i = static_cast<int>(z.precision - 1); i >= 0; --i){
             if(z.data[i] > w.data[i]){ return 1; }
             if(z.data[i] < w.data[i]){ return -1; }
