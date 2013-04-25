@@ -84,7 +84,7 @@ public:
         fraction_part(m_fraction_part),
         precision(m_precision),
         sign(0),
-        data(nullptr)
+        data(new uint32_t[other.precision])
     { set(other); }
 
     x_fixed_point(x_fixed_point &&other) :
@@ -171,6 +171,12 @@ public:
         data[fraction_part] = static_cast<uint32_t>(n < 0 ? -n : n);
     }
 
+    void set(int n, const std::string &str_i, const std::string &str_f, uint32_t radix = 10){
+        set(str_i, str_f, radix);
+        sign = n > 0 ? 1 : n < 0 ? -1 : 0;
+        if(sign == 0){ primitive_set_zero(); }
+    }
+
     void set(const std::string &str_i, const std::string &str_f, uint32_t radix = 10){
         sign = 1;
         for(std::size_t i = 0; i < precision; ++i){ data[i] = 0; }
@@ -248,6 +254,10 @@ public:
         data = new_data;
     }
 
+    void mul(uint32_t w){
+        primitive_mul_by_single(w);
+    }
+
     void mul(const x_fixed_point &v, const x_fixed_point &w){
         if(v.sign == 0 || w.sign == 0){
             sign = 0;
@@ -270,6 +280,10 @@ public:
         for(std::size_t i = 0; i < precision; ++i){
             data[i] = buff[precision + i - 1];
         }
+    }
+
+    void div(uint32_t w){
+        primitive_div_by_single(w);
     }
 
     void div(const x_fixed_point &u, const x_fixed_point &v){
@@ -350,7 +364,6 @@ public:
                 temp.primitive_set_fixed_point(*this);
                 primitive_set_fixed_point(w);
                 primitive_sub_n(temp);
-                sign = -sign;
             }
             primitive_zero_normalize();
         }else{
@@ -385,8 +398,13 @@ public:
         }
     }
 
-    static int compare(const fixed_point &x, const fixed_point &y){
-        return primitive_compare(x, y);
+    static int compare(const x_fixed_point &x, const x_fixed_point &y){
+        int n = primitive_compare(x, y);
+        if(n == 0){
+            return x.sign > y.sign ? 1 : x.sign < y.sign ? -1 : 0;
+        }else{
+            return n;
+        }
     }
 
 private:
@@ -536,6 +554,9 @@ private:
 
     void primitive_set_fixed_point(const x_fixed_point &w){
         if(this == &w){ return; }
+        m_integral_part = w.integral_part;
+        m_fraction_part = w.fraction_part;
+        m_precision = w.precision;
         sign = w.sign;
         for(std::size_t i = 0; i < precision; ++i){ data[i] = w.data[i]; }
     }
@@ -618,11 +639,9 @@ public:
             queue_ptr(param.queue)
         {}
 
-        void clear(){
-            buffer_list.clear();
-            event.reset(nullptr);
-            context_ptr = nullptr;
-            queue_ptr = nullptr;
+        template<class T>
+        void set_arg(cl_uint idx, const T &value){
+            kernel_instance.setArg(idx, value);
         }
 
         template<class T>
@@ -636,7 +655,6 @@ public:
         void launch(const cl::NDRange &global, const cl::NDRange &local){
             event.reset(new cl::Event);
             queue_ptr->enqueueNDRangeKernel(kernel_instance, cl::NullRange, global, local, nullptr, event.get());
-            event->wait();
         }
 
         template<class T>
@@ -681,6 +699,14 @@ public:
         *devices = context->getInfo<CL_CONTEXT_DEVICES>();
         queue.reset(new cl::CommandQueue(*context, (*devices)[0]));
         rebuild(integral_part, fraction_part, mmp_kernel_filepath);
+    }
+
+    std::size_t get_integral_part() const{
+        return integral_part;
+    }
+
+    std::size_t get_fraction_part() const{
+        return fraction_part;
     }
 
     kernel_functor_parameter create_functor(const std::string &fn_name){

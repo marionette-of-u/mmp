@@ -226,7 +226,6 @@ void add(fixed_point *z, const fixed_point *w){
             copy_array(temp, z->data);
             set_fixed_point(z, w);
             sub_n(z->data, temp, 0);
-            z->sign = -z->sign;
         }
         zero_normalize(z);
     }else{
