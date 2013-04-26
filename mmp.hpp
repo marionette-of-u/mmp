@@ -321,13 +321,13 @@ public:
         vn[0] = static_cast<uint32_t>(primitive_s_lshift(v.data[0], s));
         std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2]);
         un = un_scoped_guard.get();
-        un[m + fraction_part] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], BASE2_TYPE_SIZE / 2 - s));
         for(i = 0; i < static_cast<int64_t>(precision); ++i){ un[i] = 0; }
+        un[m + fraction_part] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], BASE2_TYPE_SIZE / 2 - s));
         for(i = m - 1; i > 0; --i){
             un[i + fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], BASE2_TYPE_SIZE / 2 - s));
         }
         un[fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[0], s));
-        for(j = m + fraction_part - n; j >= 0; --j){
+        for(j = m + fraction_part - n - 1; j >= 0; --j){
             qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
             rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
             do{
@@ -353,8 +353,9 @@ public:
                 for(i = 0; i < n; ++i){
                     t = un[i + j] + vn[i] + k;
                     un[i + j] = static_cast<uint32_t>(t);
+                    k = t >> BASE2_TYPE_SIZE / 2;
                 }
-                k = t >> BASE2_TYPE_SIZE / 2;
+                un[j + n] += static_cast<uint32_t>(k);
             }
         }
     }

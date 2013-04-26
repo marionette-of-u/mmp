@@ -354,22 +354,26 @@ void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
         }
         return;
     }
+
     const base_type s = nlz(v->data[n - 1]);
     u_base_type vn[PREC * 2];
     for(i = (base2_type)(n - 1); i > 0; --i){
         vn[i] = (u_base_type)(s_lshift(v->data[i], s) | s_rshift(v->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
     }
     vn[0] = (u_base_type)(s_lshift(v->data[0], s));
+
     u_base_type un[(PREC + 1) * 2];
+    for(i = 0; i < (PREC + 1) * 2; ++i){ un[i] = 0; }
     un[m + FRACTION_PART] = (u_base_type)s_rshift(u->data[m - 1], BASE2_TYPE_SIZE / 2 - s);
-    for(i = 0; i < PREC; ++i){ un[i] = 0; }
     for(i = m - 1; i > 0; --i){
         un[i + FRACTION_PART] = (u_base_type)(s_lshift(u->data[i], s) | s_rshift(u->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
     }
     un[FRACTION_PART] = (u_base_type)(s_lshift(u->data[0], s));
-    for(j = m + FRACTION_PART - n; j >= 0; --j){
+
+    for(j = m + FRACTION_PART - n - 1; j >= 0; --j){
         qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
         rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
+        
         do{
             if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j - n - 2]){
                 --qhat;
@@ -377,6 +381,7 @@ void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
                 if(rhat < b){ continue; }
             }
         }while(false);
+        
         k = 0;
         for(i = 0; i < n; ++i){
             p = qhat * vn[i];
@@ -386,15 +391,17 @@ void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
         }
         t = un[j + n] - k;
         un[j + n] = (u_base_type)t;
+        
         q->data[j] = (u_base_type)qhat;
         if(t < 0){
-            --q->data[j];
+            --(q->data[j]);
             k = 0;
             for(i = 0; i < n; ++i){
                 t = un[i + j] + vn[i] + k;
                 un[i + j] = (u_base_type)t;
+                k = t >> BASE2_TYPE_SIZE / 2;
             }
-            k = t >> BASE2_TYPE_SIZE / 2;
+            un[j + n] += (u_base_type)k;
         }
     }
 }
