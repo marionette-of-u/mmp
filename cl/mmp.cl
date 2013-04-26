@@ -337,17 +337,30 @@ void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
     }
     q->sign = u->sign * v->sign;
     const base_type m = degree(u), n = degree(v);
+    if(n > m){
+        q->sign = 0;
+        return;
+    }
     const u_base2_type b = (u_base2_type)BASE2_TYPE_MASK + 1;
     u_base2_type qhat, rhat, p;
-    base2_type i, j, t, k;
+    base2_type i, j, t, k, z;
     for(i = 0; i < PREC; ++i){ q->data[i] = 0; }
+    if(n == 1){
+        k = 0;
+        for(j = m - 1; j >= 0; --j){
+            z = k * b + u->data[j];
+            q->data[j] = (uint)(z / v->data[0]);
+            k = z - q->data[j] * v->data[0];
+        }
+        return;
+    }
     const base_type s = nlz(v->data[n - 1]);
     u_base_type vn[PREC * 2];
     for(i = (base2_type)(n - 1); i > 0; --i){
         vn[i] = (u_base_type)(s_lshift(v->data[i], s) | s_rshift(v->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
     }
     vn[0] = (u_base_type)(s_lshift(v->data[0], s));
-    u_base_type un[(PREC + 1) * 2 + PREC];
+    u_base_type un[(PREC + 1) * 2];
     un[m + FRACTION_PART] = (u_base_type)s_rshift(u->data[m - 1], BASE2_TYPE_SIZE / 2 - s);
     for(i = 0; i < PREC; ++i){ un[i] = 0; }
     for(i = m - 1; i > 0; --i){

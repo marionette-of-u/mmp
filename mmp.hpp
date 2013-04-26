@@ -65,8 +65,8 @@ public:
         const std::string &str_i,
         const std::string &str_f,
         uint32_t radix = 10
-        ) :
-    m_integral_part(integral_part_),
+    ) :
+        m_integral_part(integral_part_),
         m_fraction_part(fraction_part_),
         m_precision(integral_part_ + fraction_part_),
         integral_part(m_integral_part),
@@ -293,11 +293,25 @@ public:
         }
         sign = u.sign * v.sign;
         const int32_t m = u.primitive_degree(), n = v.primitive_degree();
+        if(n > m){
+            sign = 0;
+            primitive_set_zero();
+            return;
+        }
         const uint64_t b = static_cast<uint64_t>(BASE2_TYPE_MASK) + 1;
         uint32_t *un, *vn;
         uint64_t qhat, rhat, p;
-        int64_t i, j, t, k;
+        int64_t i, j, t, k, z;
         for(i = 0; i < static_cast<int64_t>(precision); ++i){ data[i] = 0; }
+        if(n == 1){
+            k = 0;
+            for(j = m - 1; j >= 0; --j){
+                z = k * b + u.data[j];
+                data[j] = static_cast<uint32_t>(z / v.data[0]);
+                k = z - data[j] * v.data[0];
+            }
+            return;
+        }
         const uint32_t s = primitive_nlz(v.data[n - 1]);
         std::unique_ptr<uint32_t[]> vn_scoped_guard(new uint32_t[precision * 2]);
         vn = vn_scoped_guard.get();
@@ -305,10 +319,10 @@ public:
             vn[i] = static_cast<uint32_t>(primitive_s_lshift(v.data[i], s) | primitive_s_rshift(v.data[i - 1], BASE2_TYPE_SIZE / 2 - s));
         }
         vn[0] = static_cast<uint32_t>(primitive_s_lshift(v.data[0], s));
-        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2 + precision]);
+        std::unique_ptr<uint32_t[]> un_scoped_guard(new uint32_t[(precision + 1) * 2]);
         un = un_scoped_guard.get();
         un[m + fraction_part] = static_cast<uint32_t>(primitive_s_rshift(u.data[m - 1], BASE2_TYPE_SIZE / 2 - s));
-        for(i = 0; i < static_cast<int64_t>(fraction_part); ++i){ un[i] = 0; }
+        for(i = 0; i < static_cast<int64_t>(precision); ++i){ un[i] = 0; }
         for(i = m - 1; i > 0; --i){
             un[i + fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[i], s) | primitive_s_rshift(u.data[i - 1], BASE2_TYPE_SIZE / 2 - s));
         }
@@ -355,7 +369,7 @@ public:
             primitive_add_n(w);
             return;
         }
-        int u = compare(*this, w);
+        int u = primitive_compare(*this, w);
         if(u != 0){
             if(u > 0){
                 primitive_sub_n(w);
@@ -376,12 +390,13 @@ public:
         if(sign == 0){
             primitive_set_fixed_point(w);
             sign = -sign;
+            return;
         }
         if(sign != w.sign){
             primitive_add_n(w);
             return;
         }
-        int u = compare(*this, w);
+        int u = primitive_compare(*this, w);
         if(u != 0){
             if(u > 0){
                 primitive_sub_n(w);
@@ -655,6 +670,7 @@ public:
         void launch(const cl::NDRange &global, const cl::NDRange &local){
             event.reset(new cl::Event);
             queue_ptr->enqueueNDRangeKernel(kernel_instance, cl::NullRange, global, local, nullptr, event.get());
+            event->wait();
         }
 
         template<class T>
