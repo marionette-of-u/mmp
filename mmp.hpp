@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <iostream>
 #include <fstream>
 #include <vector>
 #include <map>
@@ -294,7 +293,6 @@ public:
         sign = u.sign * v.sign;
         const int32_t m = u.primitive_degree(), n = v.primitive_degree();
         if(n > m){
-            sign = 0;
             primitive_set_zero();
             return;
         }
@@ -328,10 +326,11 @@ public:
         }
         un[fraction_part] = static_cast<uint32_t>(primitive_s_lshift(u.data[0], s));
         for(j = m + fraction_part - n - 1; j >= 0; --j){
-            qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
-            rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
+            uint64_t w = un[j + n] * b + un[j + n - 1];
+            qhat = w / vn[n - 1];
+            rhat = w - qhat * vn[n - 1];
             do{
-                if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j - n - 2]){
+                if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j + n - 2]){
                     --qhat;
                     rhat += vn[n - 1];
                     if(rhat < b){ continue; }
@@ -356,6 +355,12 @@ public:
                     k = t >> BASE2_TYPE_SIZE / 2;
                 }
                 un[j + n] += static_cast<uint32_t>(k);
+            }
+        }
+        for(i = 0; i < n; ++i){
+            if(primitive_s_rshift(un[i], s) | primitive_s_lshift(un[i + 1], BASE2_TYPE_SIZE / 2 - s)){
+                primitive_sub_n_by_single(1);
+                break;
             }
         }
     }
@@ -608,12 +613,12 @@ private:
         return n - static_cast<int32_t>(x);
     }
 
-    static uint64_t primitive_s_lshift(uint64_t x, int32_t n){
+    static uint32_t primitive_s_lshift(uint32_t x, int32_t n){
         if(n >= BASE2_TYPE_SIZE / 2){ return 0; }
         return x << n;
     }
 
-    static uint64_t primitive_s_rshift(uint64_t x, int32_t n){
+    static uint32_t primitive_s_rshift(uint32_t x, int32_t n){
         if(n >= BASE2_TYPE_SIZE / 2){ return 0; }
         return x >> n;
     }

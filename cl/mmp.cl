@@ -56,6 +56,15 @@ u_base_type sub_n(raw_data_type *z, const raw_data_type *w, u_base_type borrow){
     return (u_base_type)borrow2;
 }
 
+void sub_n_by_word(raw_data_type *z, u_base_type w){
+    u_base2_type borrow2 = w;
+    for(base_type i = 0; i < PREC; ++i){
+        u_base2_type x = (u_base2_type)(z[i]) - borrow2;
+        z[i] = (u_base_type)(x & BASE2_TYPE_MASK);
+        borrow2 = x > BASE2_TYPE_MASK ? 1 : 0;
+    }
+}
+
 // mul multiprec by singleprec with carry.
 // return value is overflow value.
 u_base_type mul_by_single(raw_data_type *z, u_base_type w, u_base_type carry){
@@ -338,10 +347,10 @@ void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
     q->sign = u->sign * v->sign;
     const base_type m = degree(u), n = degree(v);
     if(n > m){
-        q->sign = 0;
+        set_zero(q);
         return;
     }
-    const u_base2_type b = (u_base2_type)BASE2_TYPE_MASK + 1;
+    const u_base2_type b = (u_base2_type)(BASE2_TYPE_MASK) + 1;
     u_base2_type qhat, rhat, p;
     base2_type i, j, t, k, z;
     for(i = 0; i < PREC; ++i){ q->data[i] = 0; }
@@ -349,59 +358,60 @@ void div(fixed_point *q, const fixed_point *u, const fixed_point *v){
         k = 0;
         for(j = m - 1; j >= 0; --j){
             z = k * b + u->data[j];
-            q->data[j] = (uint)(z / v->data[0]);
+            q->data[j] = (u_base_type)(z / v->data[0]);
             k = z - q->data[j] * v->data[0];
         }
         return;
     }
-
-    const base_type s = nlz(v->data[n - 1]);
+    const u_base_type s = nlz(v->data[n - 1]);
     u_base_type vn[PREC * 2];
-    for(i = (base2_type)(n - 1); i > 0; --i){
+    for(i = n - 1; i > 0; --i){
         vn[i] = (u_base_type)(s_lshift(v->data[i], s) | s_rshift(v->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
     }
     vn[0] = (u_base_type)(s_lshift(v->data[0], s));
-
     u_base_type un[(PREC + 1) * 2];
-    for(i = 0; i < (PREC + 1) * 2; ++i){ un[i] = 0; }
-    un[m + FRACTION_PART] = (u_base_type)s_rshift(u->data[m - 1], BASE2_TYPE_SIZE / 2 - s);
+    for(i = 0; i < (base2_type)(PREC); ++i){ un[i] = 0; }
+    un[m + FRACTION_PART] = (u_base_type)(s_rshift(u->data[m - 1], BASE2_TYPE_SIZE / 2 - s));
     for(i = m - 1; i > 0; --i){
         un[i + FRACTION_PART] = (u_base_type)(s_lshift(u->data[i], s) | s_rshift(u->data[i - 1], BASE2_TYPE_SIZE / 2 - s));
     }
     un[FRACTION_PART] = (u_base_type)(s_lshift(u->data[0], s));
-
     for(j = m + FRACTION_PART - n - 1; j >= 0; --j){
-        qhat = (un[j + n] * b + un[j + n - 1]) / vn[n - 1];
-        rhat = (un[j + n] * b + un[j + n - 1]) - qhat * vn[n - 1];
-        
+        u_base2_type w = un[j + n] * b + un[j + n - 1];
+        qhat = w / vn[n - 1];
+        rhat = w - qhat * vn[n - 1];
         do{
-            if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j - n - 2]){
+            if(qhat >= b || qhat * vn[n - 2] > b * rhat + un[j + n - 2]){
                 --qhat;
                 rhat += vn[n - 1];
                 if(rhat < b){ continue; }
             }
         }while(false);
-        
         k = 0;
         for(i = 0; i < n; ++i){
             p = qhat * vn[i];
             t = un[i + j] - k - (p & BASE2_TYPE_MASK);
-            un[i + j] = (u_base_type)t;
+            un[i + j] = (u_base_type)(t);
             k = (p >> BASE2_TYPE_SIZE / 2) - (t >> BASE2_TYPE_SIZE / 2);
         }
         t = un[j + n] - k;
-        un[j + n] = (u_base_type)t;
-        
-        q->data[j] = (u_base_type)qhat;
+        un[j + n] = (u_base_type)(t);
+        q->data[j] = (u_base_type)(qhat);
         if(t < 0){
-            --(q->data[j]);
+            --q->data[j];
             k = 0;
             for(i = 0; i < n; ++i){
                 t = un[i + j] + vn[i] + k;
-                un[i + j] = (u_base_type)t;
+                un[i + j] = (u_base_type)(t);
                 k = t >> BASE2_TYPE_SIZE / 2;
             }
-            un[j + n] += (u_base_type)k;
+            un[j + n] += (u_base_type)(k);
+        }
+    }
+    for(i = 0; i < n; ++i){
+        if(s_rshift(un[i], s) | s_lshift(un[i + 1], BASE2_TYPE_SIZE / 2 - s)){
+            sub_n_by_word(q->data, 1);
+            break;
         }
     }
 }
